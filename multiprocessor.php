@@ -5,6 +5,7 @@ require_once __DIR__ . '/iterator/iteratorinterface.php';
 require_once __DIR__ . '/processor/processor.php';
 
 /**
+ * @todo Autoloader + composerify
  * @todo logging
  * @todo clean shutdown
  * @todo Stop on child fatal
