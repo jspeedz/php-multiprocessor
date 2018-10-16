@@ -2,9 +2,12 @@
 namespace MultiProcessor\Utility;
 
 class ProcessorCores {
-	public static $numberOfCores;
+	/**
+	 * @var int
+	 */
+	public static $numberOfCores = 0;
 
-	public static function getNumberOfCores() {
+	public static function getNumberOfCores(): int {
 		if(!empty(self::$numberOfCores)) {
 			return self::$numberOfCores;
 		}
