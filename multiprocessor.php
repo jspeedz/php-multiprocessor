@@ -9,6 +9,7 @@ require_once __DIR__ . '/processor/processor.php';
  * @todo logging
  * @todo clean shutdown
  * @todo Stop on child fatal
+ * @todo Stop children on parent fatal @see http://php.net/socket_create_pair
  *
  * Class MultiProcessor
  * @package MultiProcessor
@@ -28,6 +29,16 @@ class MultiProcessor {
 		'chunkSize' => 10,
 		'stopOnChildFatal' => true
 	];
+
+    /**
+     * @var \Closure[]
+     */
+    private $closeResourceOnceCallbacks = [];
+
+    /**
+     * @var \Closure[]
+     */
+    private $closeResourceAlwaysCallbacks = [];
 
 	/**
 	 * @var Iterator\Iterator
@@ -76,7 +87,7 @@ class MultiProcessor {
 	 */
 	private $gracefullShutdown = false;
 
-	public function __construct(Iterator\Iterator $data, Processor\Processor $processor) {
+    public function __construct(Iterator\Iterator $data, Processor\Processor $processor): void {
 //		$data = $data->getIterator();
 		$this->data = $data;
 		$this->processor = $processor;
@@ -96,7 +107,7 @@ class MultiProcessor {
 	 *
 	 * @param integer $children
 	 */
-	public function setMaximumConcurrentChildren(int $children) {
+	public function setMaximumConcurrentChildren(int $children): void {
 		$this->settings['concurrentChildren'] = $children;
 	}
 
@@ -105,7 +116,7 @@ class MultiProcessor {
 	 *
 	 * @param integer $chunkSize
 	 */
-	public function setChunkSize(int $chunkSize) {
+	public function setChunkSize(int $chunkSize): void {
 		$this->settings['chunkSize'] = $chunkSize;
 	}
 
@@ -116,11 +127,39 @@ class MultiProcessor {
 	 *
 	 * @throws \Exception
 	 */
-	public function setPriority(int $priority) {
+	public function setPriority(int $priority): void {
 		if($priority < -20 || $priority > 19) {
 			throw new \Exception('Invalid process priority (' . $priority . ')');
 		}
 		$this->settings['priority'] = $priority;
+	}
+
+    /**
+     * Register closures to close resource handles before forking.
+     *
+     * Makes sure all forks create their own resource handles by closing the current ones.
+     * Re-using resources like file handles, MySQL or network connections will cause trouble when forks try to use them.
+     * They will try to use the same handles/connections and collide.
+     *
+     * @param \Closure $callack
+     * @param string $trigger always|once (always run callbacks before forking, or once before the first fork)
+     *
+     * @throws \Exception
+     */
+    public function addCloseResourceCallback(\Closure $callack, string $trigger = 'always'): void {
+        if(!in_array($trigger, [
+            'once',
+            'always'
+        ])) {
+            throw new \Exception('Unknown trigger (' . $trigger . ')');
+        }
+
+        if($trigger === 'once') {
+            $this->closeResourceOnceCallbacks[] = $callback;
+        }
+        else {
+            $this->closeResourceAlwaysCallbacks[] = $callback;
+        }
 	}
 
 	/**
@@ -128,7 +167,7 @@ class MultiProcessor {
 	 *
 	 * @throws \Exception
 	 */
-	private function signalHandler($signal) {
+	private function signalHandler($signal): void {
 		switch($signal) {
 			case SIGTERM:
 				// Default kill command
@@ -168,14 +207,20 @@ class MultiProcessor {
 	 *
 	 * @throws \Exception
 	 */
-	public function run() {
+	public function run(): void {
 		$this->data->generateChunks($this->settings['chunkSize']);
 		$this->timeStarted = time();
 		echo 'Chunks                    Progress                           ' . str_repeat(' ', strlen($this->data->count()) * 2 + 1) . 'Elapsed  / Remaining';
 		echo "\r" . $this->getRunStatistics();
+
+        $this->closeAllResources('once');
+
 		foreach($this->data as $chunk) {
 			$processor = clone $this->processor;
 			$this->currentRunningChildren++;
+
+            $this->closeAllResources('always');
+
 			$pid = pcntl_fork();
 			if($pid === -1) {
 				throw new \Exception('Could not fork');
@@ -210,7 +255,7 @@ class MultiProcessor {
 	/**
 	 * @return string
 	 */
-	private function getRunStatistics() {
+	private function getRunStatistics(): string {
 		$elapsedTime = time() - $this->timeStarted;
 		if(empty($this->chunksProcessed)) {
 			return  PHP_EOL . sprintf('%1$\' ' . (string) (strlen($this->data->count()) * 2 + 1) . 's', '0/' . $this->data->count()) . '    ' .
@@ -238,7 +283,7 @@ class MultiProcessor {
 		'     ' . $elapsedTime . ' / ' . $timeToGo;
 	}
 
-	private function waitForChildren() {
+	private function waitForChildren(): void {
 		while($childPID = pcntl_waitpid(0, $status) !== -1) {
 			// @todo return value, do logging with it?
 
@@ -270,14 +315,43 @@ class MultiProcessor {
 			}
 			else {
 				// Non clean exit
-
+                throw new \Exception('Non clean exit?');
 			}
 			$this->currentRunningChildren--;
 			$this->chunksProcessed++;
-			echo "\r" . $this->getRunStatistics();
+			echo "\r" . $this->getRunStatistics();ß
 			if($this->gracefullShutdown && $this->currentRunningChildren === 0) {
 				echo PHP_EOL . 'Gracefully shut down' . PHP_EOL;
 			}
 		}
+	}
+
+    /**
+     * Close resources/connections so they will have to be re-initialized for all children.
+     *
+     * @param string $trigger once|always
+     *
+     * @throws \Exception
+     */
+    private function closeAllResources(string $trigger): void {
+        if(!in_array($trigger, [
+            'once',
+            'always'
+        ])) {
+            throw new \Exception('Unknown trigger (' . $trigger . ')');
+        }
+
+        if($trigger === 'once') {
+            if(count($this->closeResourceOnceCallbacks) > 0) {
+                foreach($this->closeResourceOnceCallbacks as $callback) {
+                    $callback();
+                }
+            }
+        }
+        else if(count($this->closeResourceAlwaysCallbacks) > 0) {
+            foreach($this->closeResourceAlwaysCallbacks as $callback) {
+                $callback();
+            }
+        }
 	}
 }
