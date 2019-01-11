@@ -87,8 +87,7 @@ class MultiProcessor {
 	 */
 	private $gracefullShutdown = false;
 
-    public function __construct(Iterator\Iterator $data, Processor\Processor $processor): void {
-//		$data = $data->getIterator();
+    public function __construct(Iterator\Iterator $data, Processor\Processor $processor) {
 		$this->data = $data;
 		$this->processor = $processor;
 
@@ -319,7 +318,7 @@ class MultiProcessor {
 			}
 			$this->currentRunningChildren--;
 			$this->chunksProcessed++;
-			echo "\r" . $this->getRunStatistics();ß
+			echo "\r" . $this->getRunStatistics();
 			if($this->gracefullShutdown && $this->currentRunningChildren === 0) {
 				echo PHP_EOL . 'Gracefully shut down' . PHP_EOL;
 			}
