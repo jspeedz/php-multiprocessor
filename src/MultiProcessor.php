@@ -105,7 +105,7 @@ class MultiProcessor {
         $useTicks = !function_exists('pcntl_async_signals');
         if(!$useTicks) {
             pcntl_async_signals(true);
-            $useTicks = pcntl_async_signals() === false;
+            $useTicks = !pcntl_async_signals();
         }
         if($useTicks) {
             // Asynchronous signal handling is not supported, so usage of ticks is required, resulting in a bit more overhead.
