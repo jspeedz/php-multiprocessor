@@ -1,4 +1,4 @@
-# php-multiProcessor
+# php-multiprocessor
 Multi processor for PHP
 
 ## About
