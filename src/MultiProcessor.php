@@ -12,6 +12,7 @@ use Jspeedz\MultiProcessor\Exception\{
 /**
  * @todo logging via monolog
  * @todo Progress bar, inject
+ * @todo Tests (how do I unit test code that forks? :/)
  */
 class MultiProcessor {
 	/**
