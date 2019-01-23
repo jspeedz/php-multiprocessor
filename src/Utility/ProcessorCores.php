@@ -1,5 +1,5 @@
 <?php
-namespace MultiProcessor\Utility;
+namespace Jspeedz\MultiProcessor\Utility;
 
 class ProcessorCores {
 	/**
