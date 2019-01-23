@@ -11,7 +11,7 @@ Using the same resources like file handles, MySQL or any other network connectio
 
     To prevent this issue, register close/disconnect callbacks which are executed either `once` before the first fork is made, or `always` before every fork.
 
-    Example: closing all open stream resources before once before starting to fork processes:
+    Example: closing all open stream resources once before starting to fork processes:
     ```php
     $multiProcessor->addCloseResourceCallback(
         (new \Jspeedz\MultiProcessor\Callback\Close\StreamResources)->getCallback(),
