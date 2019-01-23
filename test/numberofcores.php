@@ -1,6 +1,6 @@
 <?php
-require_once __DIR__ . '/../utility/processorcores.php';
+require __DIR__ . '/../vendor/autoload.php';
 
-use MultiProcessor\Utility\ProcessorCores;
+use Jspeedz\MultiProcessor\Utility\ProcessorCores;
 
 die(print_r(ProcessorCores::getNumberOfCores(), true));

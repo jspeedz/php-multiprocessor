@@ -1,13 +1,15 @@
 <?php
-namespace MultiProcessor\Processor;
+use Jspeedz\MultiProcessor\Processor\ProcessorAbstract;
 
-require_once __DIR__ . '/processor.php';
+class TestProcessor extends ProcessorAbstract {
+    /**
+     * Use this if you need to do some custom task before processing a chunk
+     */
+    public function initialize(): void {
+        // Do some work before the chunk is processed
+    }
 
-class Test extends Processor {
-	public function init() {
-	}
-
-	public function process() {
+	public function process(): void {
 		foreach($this->getData(``) as $randomMd5Hash) {
 			if(version_compare(PHP_VERSION, '7.2.0') >= 0 && defined('PASSWORD_ARGON2I')) {
 				$algorithm = PASSWORD_ARGON2I;
@@ -32,13 +34,14 @@ class Test extends Processor {
 		}
 	}
 
-	public function finish() {
+    /**
+     * Use this if you need to do some custom task after finishing a chunk
+     */
+	public function finish(): void {
+	    // Do some work after the chunk has been completed..
 	}
 
-	/**
-	 * Exits the current process, with optional exit value.
-	 */
-	public function exit() {
+	public function exit(): void {
 		exit(0);
 	}
 }
