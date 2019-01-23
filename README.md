@@ -13,7 +13,10 @@ Using the same resources like file handles, MySQL or any other network connectio
 
     Example: closing all open stream resources before once before starting to fork processes:
     ```php
-    $multiProcessor->addCloseResourceCallback((new \Jspeedz\MultiProcessor\Callback\Close\StreamResources)->getCallback(), 'once');
+    $multiProcessor->addCloseResourceCallback(
+        (new \Jspeedz\MultiProcessor\Callback\Close\StreamResources)->getCallback(),
+        'once'
+    );
     
     // Run directly after
     $multiProcessor->run();
