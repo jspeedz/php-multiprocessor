@@ -1,5 +1,5 @@
 {
-  "name": "jspeedz/phpMultiprocessor",
+  "name": "jspeedz/php-multiprocessor",
   "description": "Forking jobs in PHP to speed up processes",
   "keywords": [
     "forking",
