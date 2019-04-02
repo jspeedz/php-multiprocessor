@@ -10,8 +10,8 @@ use Jspeedz\MultiProcessor\Exception\{
 };
 
 /**
- * @todo logging via monolog
- * @todo Progress bar, inject
+ * @todo Logging via monolog
+ * @todo Progress bar, inject. Use package?
  * @todo Tests (how do I unit test code that forks? :/)
  */
 class MultiProcessor {
@@ -351,7 +351,7 @@ class MultiProcessor {
 				}
 				if($this->gracefulShutdown) {
 					// Should gracefully shut down, don't execute any more chunks.
-					break;
+                    exit(2);
 				}
 			}
 		}
@@ -451,7 +451,7 @@ class MultiProcessor {
             }
 
 			if($this->gracefulShutdown && $this->currentRunningChildren === 0) {
-				echo PHP_EOL . 'Gracefully shut down' . PHP_EOL;
+				echo PHP_EOL . 'Gracefully shut down because of a child process fatal' . PHP_EOL;
 			}
 		}
 	}
