@@ -347,7 +347,7 @@ class MultiProcessor {
 				$this->childPIDs[] = $pid;
 
 				if($this->currentRunningChildren >= $this->settings['concurrentChildren'] || ($this->currentRunningChildren > 0 && $this->gracefulShutdown)) {
-					$this->waitForChildren();
+					$this->waitForChildren(false);
 				}
 				if($this->gracefulShutdown) {
 					// Should gracefully shut down, don't execute any more chunks.
@@ -358,7 +358,7 @@ class MultiProcessor {
 
 		if(isset($pid) && $pid > 0) {
 			// This is the parent,children will be exited before here.
-			$this->waitForChildren(); // Wait for the remaining children.
+			$this->waitForChildren(true); // Wait for the remaining children.
 			if($this->settings['useProgressBar']) {
 				echo PHP_EOL;
 			}
@@ -396,65 +396,89 @@ class MultiProcessor {
 		'     ' . $elapsedTime . ' / ' . $timeToGo;
 	}
 
-	private function waitForChildren(): void {
-		while($childPID = pcntl_waitpid(0, $status) !== -1) {
-			// @todo return value, do logging with it?
-
-			if(pcntl_wifsignaled($status)) {
-				// Child terminated by signal, which wasn't handled.
-				$signal = pcntl_wtermsig($status);
-				trigger_error('Child terminated by unhandled signal (' . $signal . ')', E_USER_WARNING);
-			}
-			else if(pcntl_wifexited($status)) {
-				// Clean exit, exit code returned by processor in exit() statement
-				$exitCode = pcntl_wexitstatus($status);
-				if($exitCode !== 0) {
-					// Child might have fataled.
-                    if(in_array($exitCode, [
-                        1,
-                        255,
-                    ])) {
-                        // PHP exit code of 1 or 255
-						if(!$this->gracefulShutdown && $this->settings['stopOnChildFatal']) {
-							if($this->settings['stopOnFatalMethod'] === 'graceful') {
-							    echo PHP_EOL . 'A child fataled, shutting down ' . count($this->childPIDs) . ' processes (currently running children will complete)' . PHP_EOL;
-
-							    $this->gracefulShutdown = true;
-                            }
-							else {
-                                echo PHP_EOL . 'A child fataled, shutting down ' . count($this->childPIDs) . ' processes (currently running children will be terminated)' . PHP_EOL;
-
-                                $signal = $this->settings['stopOnFatalMethod'] === 'normal' ? SIGTERM : SIGKILL;
-                                foreach($this->childPIDs as $childPID) {
-                                    posix_kill($childPID, $signal);
-                                }
-
-                                exit(1);
-                            }
-						}
-					}
-				}
-				else {
-					unset($this->childPIDs[array_search($childPID, $this->childPIDs)]);
-				}
-			}
-			else {
-				// Non clean exit
-                throw new NonCleanExitException('Non clean exit?');
-			}
-
-			$this->currentRunningChildren--;
-			$this->chunksProcessed++;
-
-            if($this->settings['useProgressBar']) {
-			    echo "\r" . $this->getRunStatistics();
+    /**
+     * @param bool $finalChildren If this current wait is on the final children, or in between chunks
+     *
+     * @throws NonCleanExitException
+     */
+    private function waitForChildren(bool $finalChildren): void {
+        if($finalChildren) {
+            // Wait until the final forks are done processing
+            while($childPID = pcntl_waitpid(0, $status) !== -1) {
+                $this->executeWaitForChildren($childPID, $status);
             }
-
-			if($this->gracefulShutdown && $this->currentRunningChildren === 0) {
-				echo PHP_EOL . 'Gracefully shut down because of a child process fatal' . PHP_EOL;
-			}
-		}
+        }
+        else {
+            // Wait until we can start the next fork
+            if($childPID = pcntl_waitpid(0, $status) !== -1) {
+                $this->executeWaitForChildren($childPID, $status);
+            }
+        }
 	}
+
+    /**
+     * @param int $childPID
+     * @param int $status
+     *
+     * @throws NonCleanExitException
+     */
+    private function executeWaitForChildren(int $childPID, int $status) {
+        // @todo return value, do logging with it?
+
+        if(pcntl_wifsignaled($status)) {
+            // Child terminated by signal, which wasn't handled.
+            $signal = pcntl_wtermsig($status);
+            trigger_error('Child terminated by unhandled signal (' . $signal . ')', E_USER_WARNING);
+        }
+        else if(pcntl_wifexited($status)) {
+            // Clean exit, exit code returned by processor in exit() statement
+            $exitCode = pcntl_wexitstatus($status);
+            if($exitCode !== 0) {
+                // Child might have fataled.
+                if(in_array($exitCode, [
+                    1,
+                    255,
+                ])) {
+                    // PHP exit code of 1 or 255
+                    if(!$this->gracefulShutdown && $this->settings['stopOnChildFatal']) {
+                        if($this->settings['stopOnFatalMethod'] === 'graceful') {
+                            echo PHP_EOL . 'A child fataled, shutting down ' . count($this->childPIDs) . ' processes (currently running children will complete)' . PHP_EOL;
+
+                            $this->gracefulShutdown = true;
+                        }
+                        else {
+                            echo PHP_EOL . 'A child fataled, shutting down ' . count($this->childPIDs) . ' processes (currently running children will be terminated)' . PHP_EOL;
+
+                            $signal = $this->settings['stopOnFatalMethod'] === 'normal' ? SIGTERM : SIGKILL;
+                            foreach($this->childPIDs as $childPID) {
+                                posix_kill($childPID, $signal);
+                            }
+
+                            exit(1);
+                        }
+                    }
+                }
+            }
+            else {
+                unset($this->childPIDs[array_search($childPID, $this->childPIDs)]);
+            }
+        }
+        else {
+            // Non clean exit
+            throw new NonCleanExitException('Non clean exit?');
+        }
+
+        $this->currentRunningChildren--;
+        $this->chunksProcessed++;
+
+        if($this->settings['useProgressBar']) {
+            echo "\r" . $this->getRunStatistics();
+        }
+
+        if($this->gracefulShutdown && $this->currentRunningChildren === 0) {
+            echo PHP_EOL . 'Gracefully shut down because of a child process fatal' . PHP_EOL;
+        }
+    }
 
     /**
      * Close resources/connections so they will have to be re-initialized for all children.
