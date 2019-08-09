@@ -428,7 +428,7 @@ class MultiProcessor {
         if(pcntl_wifsignaled($status)) {
             // Child terminated by signal, which wasn't handled.
             $signal = pcntl_wtermsig($status);
-            trigger_error('Child terminated by unhandled signal (' . $signal . ')', E_USER_WARNING);
+            trigger_error('Child terminated by unhandled signal (' . $signal . ')', E_USER_ERROR);
         }
         else if(pcntl_wifexited($status)) {
             // Clean exit, exit code returned by processor in exit() statement
