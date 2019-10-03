@@ -22,6 +22,8 @@ Using the same resources like file handles, MySQL or any other network connectio
     $multiProcessor->run();
     ```
     Every fork will re-connect to the database server and have their own connection this way.
+    
+    If your goal is achieving parallel processing with isolated forks for multitenancy, initialize all resources in the processor to keep them isolated.
 2. Does not run on windows machines, as windows does not have PCNTL signaling.
 3. No warranty. This package is kind of experimental. It is in professional use in a slightly different format though. 
 
@@ -29,10 +31,16 @@ Using the same resources like file handles, MySQL or any other network connectio
 - Processing multiple HTTP/REST API calls in parallel for API's that do not allow bulk actions
 - Splitting CPU intensive bulk hashing operations over multiple cores
 - Splitting CPU intensive image manipulation operations over multiple cores (etc.)
-- Achieving multi-tenant architecture with only a single parent process
+- Achieving multitenancy architecture with only a single parent process and isolated forks to process tenants
 
 ## Prerequisites/Requirements
 - Linux or OSX
 - PHP 7.1.0 or greater
 - ext-pcntl
 - ext-posix
+
+## License
+GNU GPL 3, do whatever you like with this code.
+
+## Warranty
+None. Don't blame me if your billion dollar fusion reactor or spaceship fails due to this code. 
