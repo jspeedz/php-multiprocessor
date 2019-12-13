@@ -38,6 +38,7 @@ Using the same resources like file handles, MySQL or any other network connectio
 - PHP 7.1.0 or greater
 - ext-pcntl
 - ext-posix
+- ext-json
 
 ## License
 GNU GPL 3, do whatever you like with this code.
