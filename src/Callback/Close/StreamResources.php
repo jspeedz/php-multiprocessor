@@ -54,6 +54,10 @@ class StreamResources {
                             // Assume this is a process handle, like popen(), fsockopen() etc.
                             pclose($resource);
                         }
+                        else {
+                            // See http://php.net/manual/en/resource.php for how to close this type
+                            throw new Exception('Unknown stream type (' . json_encode($meta) . ')');
+                        }
                         break;
                     case 'Unknown':
                     case 'stream-context':
