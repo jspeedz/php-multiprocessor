@@ -30,9 +30,14 @@ class ArrayIterator extends IteratorAbstract {
 
     /**
      * @param array $data
+     * @param bool $reIndexArray = true Prevents errors when array element are unset, and the indexes are not continuous
      */
-    public function __construct(array $data) {
+    public function __construct(array $data, bool $reIndexArray = true) {
+        if($reIndexArray) {
+            $data = array_values($data);
+        }
         reset($data);
+
         $this->pointer = $this->initialPointer = key($data);
 
         $this->data = $data;
