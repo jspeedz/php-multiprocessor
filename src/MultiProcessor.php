@@ -329,6 +329,8 @@ class MultiProcessor {
 			}
 			else if($pid === 0) {
 				// This is a child.
+                $this->seedRandomGenerator();
+
 				$processor->setData($chunk);
                 if($this->settings['stopOnParentFatal']) {
                     $processor->setParentAliveCheckCallback(
@@ -508,4 +510,13 @@ class MultiProcessor {
             }
         }
 	}
+
+    /**
+     * Seed the random generator.
+     * Without doing this some PHP methods that rely on the random generator might return the same value for every fork.
+     */
+    private function seedRandomGenerator(): void {
+        // random_int() gets a random seed via for example /dev/urandom, so this will work after forking too.
+        srand(random_int(PHP_INT_MIN, PHP_INT_MAX));
+    }
 }
