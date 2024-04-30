@@ -406,13 +406,13 @@ class MultiProcessor {
     private function waitForChildren(bool $finalChildren): void {
         if($finalChildren) {
             // Wait until the final forks are done processing
-            while($childPID = pcntl_waitpid(0, $status) !== -1) {
+            while(($childPID = pcntl_waitpid(0, $status)) !== -1) {
                 $this->executeWaitForChildren($childPID, $status);
             }
         }
         else {
             // Wait until we can start the next fork
-            if($childPID = pcntl_waitpid(0, $status) !== -1) {
+            if(($childPID = pcntl_waitpid(0, $status)) !== -1) {
                 $this->executeWaitForChildren($childPID, $status);
             }
         }
