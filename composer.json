@@ -6,7 +6,7 @@
     "multiprocess"
   ],
   "type": "library",
-  "minimum-stability": "dev",
+  "minimum-stability": "stable",
   "license": "MIT",
   "authors": [
     {
@@ -30,13 +30,9 @@
     }
   },
   "require": {
-    "php": "^7.1",
+    "php": ">=7.1",
     "ext-pcntl": "*",
     "ext-posix": "*",
     "ext-json": "*"
-  },
-  "require-dev": {
-    "phpunit/phpunit": "^7.5@dev",
-    "php-coveralls/php-coveralls": "2.1.x-dev"
   }
 }
