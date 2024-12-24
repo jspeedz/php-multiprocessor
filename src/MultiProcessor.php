@@ -300,7 +300,9 @@ class MultiProcessor {
     /**
      * Run the data through the processor.
      *
+     * @throws NonCleanExitException
      * @throws ProcessException
+     * @throws UnsupportedException
      */
     public function run(): void {
         $this->data->generateChunks($this->settings['chunkSize']);
