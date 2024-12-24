@@ -4,6 +4,4 @@ namespace Jspeedz\MultiProcessor\Iterator;
 /**
  * @todo
  */
-class MySQLi implements IteratorInterface {
-
-}
+class MySQLi implements IteratorInterface {}

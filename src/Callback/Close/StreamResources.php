@@ -2,7 +2,7 @@
 namespace Jspeedz\MultiProcessor\Callback\Close;
 
 use Closure;
-use Exception;
+use Jspeedz\MultiProcessor\Exception\UnsupportedException;
 
 /**
  * Please note, this class is experimental
@@ -45,7 +45,7 @@ class StreamResources {
                                             break;
                                         default:
                                             // See http://php.net/manual/en/resource.php for how to close this type
-                                            throw new Exception('Unknown stream type (' . $meta['stream_type'] . ')');
+                                            throw new UnsupportedException('Unknown stream type (' . $meta['stream_type'] . ')');
                                     }
                                     break;
                             }
@@ -56,14 +56,14 @@ class StreamResources {
                         }
                         else {
                             // See http://php.net/manual/en/resource.php for how to close this type
-                            throw new Exception('Unknown stream type (' . json_encode($meta) . ')');
+                            throw new UnsupportedException('Unknown stream type (' . json_encode($meta) . ')');
                         }
                         break;
                     case 'Unknown':
                     case 'stream-context':
                         break;
                     default:
-                        throw new Exception('Unknown resource type (' . get_resource_type($resource) . ')');
+                        throw new UnsupportedException('Unknown resource type (' . get_resource_type($resource) . ')');
                 }
             }
         };

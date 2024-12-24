@@ -3,4 +3,4 @@ namespace Jspeedz\MultiProcessor\Exception;
 
 use Exception;
 
-class NonCleanExitException extends Exception {}
+class UnsupportedException extends Exception {}
