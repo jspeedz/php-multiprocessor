@@ -5,10 +5,10 @@ use Closure;
 use Jspeedz\MultiProcessor\Iterator\ArrayIterator;
 
 abstract class ProcessorAbstract implements ProcessorInterface {
-	/**
-	 * @var iterable
-	 */
-	private $data;
+    /**
+     * @var iterable
+     */
+    private $data;
 
     /**
      * @var Closure|null
@@ -29,10 +29,10 @@ abstract class ProcessorAbstract implements ProcessorInterface {
         }
     }
 
-	/**
-	 * @param iterable $data
-	 */
-	public function setData(iterable $data): void {
+    /**
+     * @param iterable $data
+     */
+    public function setData(iterable $data): void {
         if(is_array($data)) {
             $data = new ArrayIterator($data);
         }
@@ -42,20 +42,20 @@ abstract class ProcessorAbstract implements ProcessorInterface {
             $data->setIterationCallback($this->parentAliveCheck);
         }
 
-		$this->data = $data;
-	}
+        $this->data = $data;
+    }
 
     /**
      * Use this if you need to do some custom task before processing a chunk
      */
     public function initialize(): void {}
 
-	/**
-	 * @return iterable
-	 */
-	public function getData(): iterable {
-		return $this->data;
-	}
+    /**
+     * @return iterable
+     */
+    public function getData(): iterable {
+        return $this->data;
+    }
 
     /**
      * Use this if you need to do some custom task after finishing a chunk
@@ -65,8 +65,8 @@ abstract class ProcessorAbstract implements ProcessorInterface {
     /**
      * Should exit the current process, overwrite if you need a custom exit code
      */
-	public function exit(): void {
-		// 0 is successful, can be 1-254 for custom exit codes..
-		exit(0);
-	}
+    public function exit(): void {
+        // 0 is successful, can be 1-254 for custom exit codes..
+        exit(0);
+    }
 }

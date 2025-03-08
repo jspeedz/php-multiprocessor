@@ -2,12 +2,12 @@
 namespace Jspeedz\MultiProcessor;
 
 use Closure;
-use Exception;
 use Jspeedz\MultiProcessor\Callback\Iterator\ParentIsAlive;
-use Jspeedz\MultiProcessor\Exception\{
-    NonCleanExitException,
-    StopOnFatalMethodException
-};
+use Jspeedz\MultiProcessor\Exception\InvalidPriorityException;
+use Jspeedz\MultiProcessor\Exception\NonCleanExitException;
+use Jspeedz\MultiProcessor\Exception\ProcessException;
+use Jspeedz\MultiProcessor\Exception\StopOnFatalMethodException;
+use Jspeedz\MultiProcessor\Exception\UnsupportedException;
 
 /**
  * @todo Logging via monolog
@@ -15,23 +15,23 @@ use Jspeedz\MultiProcessor\Exception\{
  * @todo Tests (how do I unit test code that forks? :/)
  */
 class MultiProcessor {
-	/**
-	 * @var integer
-	 */
-	protected $parentPID;
+    /**
+     * @var integer
+     */
+    protected $parentPID;
 
-	/**
-	 * @var array
-	 */
-	private $settings = [
-		'priority' => 19,
-		'concurrentChildren' => 1,
-		'chunkSize' => 10,
+    /**
+     * @var array
+     */
+    private $settings = [
+        'priority' => 19,
+        'concurrentChildren' => 1,
+        'chunkSize' => 10,
         'stopOnParentFatal' => true,
-		'stopOnChildFatal' => true,
+        'stopOnChildFatal' => true,
         'stopOnFatalMethod' => 'graceful',
         'useProgressBar' => true,
-	];
+    ];
 
     /**
      * @var Closure[]
@@ -43,52 +43,52 @@ class MultiProcessor {
      */
     private $closeResourceAlwaysCallbacks = [];
 
-	/**
-	 * @var Iterator\IteratorAbstract
-	 */
-	private $data;
+    /**
+     * @var Iterator\IteratorAbstract
+     */
+    private $data;
 
-	/**
-	 * @var Processor\ProcessorAbstract
-	 */
-	private $processor;
+    /**
+     * @var Processor\ProcessorAbstract
+     */
+    private $processor;
 
-	/**
-	 * @var integer
-	 */
-	private $currentRunningChildren = 0;
+    /**
+     * @var integer
+     */
+    private $currentRunningChildren = 0;
 
-	/**
-	 * Signals to bind to the signal handler.
-	 * Note: can't bind to SIGKILL as this event can't be overridden, it's just killed.
-	 *
-	 * @var integer[]
-	 */
-	private $signalHandlerEvent = [
-		SIGTERM,
-		SIGINT,
-		SIGCHLD
-	];
+    /**
+     * Signals to bind to the signal handler.
+     * Note: can't bind to SIGKILL as this event can't be overridden, it's just killed.
+     *
+     * @var integer[]
+     */
+    private $signalHandlerEvent = [
+        SIGTERM,
+        SIGINT,
+        SIGCHLD
+    ];
 
-	/**
-	 * @var integer[]
-	 */
-	private $childPIDs = [];
+    /**
+     * @var integer[]
+     */
+    private $childPIDs = [];
 
-	/**
-	 * @var integer
-	 */
-	private $chunksProcessed = 0;
+    /**
+     * @var integer
+     */
+    private $chunksProcessed = 0;
 
-	/**
-	 * @var integer
-	 */
-	private $timeStarted;
+    /**
+     * @var integer
+     */
+    private $timeStarted;
 
-	/**
-	 * @var boolean
-	 */
-	private $gracefulShutdown = false;
+    /**
+     * @var boolean
+     */
+    private $gracefulShutdown = false;
 
     /**
      * @var boolean $stopProcessing If true, will kill the chunk loop
@@ -100,8 +100,8 @@ class MultiProcessor {
      * @param Processor\ProcessorAbstract $processor
      */
     public function __construct(Iterator\IteratorAbstract $data, Processor\ProcessorAbstract $processor) {
-		$this->data = $data;
-		$this->processor = $processor;
+        $this->data = $data;
+        $this->processor = $processor;
 
         $useTicks = !function_exists('pcntl_async_signals');
         if(!$useTicks) {
@@ -113,45 +113,45 @@ class MultiProcessor {
             declare(ticks = 1);
         }
 
-		$signalHandler = [$this, 'signalHandler'];
-		foreach($this->signalHandlerEvent as $signal) {
-			pcntl_signal($signal, $signalHandler);
-		}
+        $signalHandler = [$this, 'signalHandler'];
+        foreach($this->signalHandlerEvent as $signal) {
+            pcntl_signal($signal, $signalHandler);
+        }
 
-		$this->parentPID = posix_getpid();
-	}
+        $this->parentPID = posix_getpid();
+    }
 
-	/**
-	 * The number of processes to fork at any given moment.
-	 *
-	 * @param integer $children
-	 */
-	public function setMaximumConcurrentChildren(int $children): void {
-		$this->settings['concurrentChildren'] = $children;
-	}
+    /**
+     * The number of processes to fork at any given moment.
+     *
+     * @param integer $children
+     */
+    public function setMaximumConcurrentChildren(int $children): void {
+        $this->settings['concurrentChildren'] = $children;
+    }
 
-	/**
-	 * Items to handle per chunk/child.
-	 *
-	 * @param integer $chunkSize
-	 */
-	public function setChunkSize(int $chunkSize): void {
-		$this->settings['chunkSize'] = $chunkSize;
-	}
+    /**
+     * Items to handle per chunk/child.
+     *
+     * @param integer $chunkSize
+     */
+    public function setChunkSize(int $chunkSize): void {
+        $this->settings['chunkSize'] = $chunkSize;
+    }
 
-	/**
-	 * Set the priority for the child processes. Defaults to 19 if not set.
-	 *
-	 * @param integer $priority −20 is the highest priority and 19 the lowest.
-	 *
-	 * @throws Exception
-	 */
-	public function setPriority(int $priority): void {
-		if($priority < -20 || $priority > 19) {
-			throw new Exception('Invalid process priority (' . $priority . ')');
-		}
-		$this->settings['priority'] = $priority;
-	}
+    /**
+     * Set the priority for the child processes. Defaults to 19 if not set.
+     *
+     * @param integer $priority −20 is the highest priority and 19 the lowest.
+     *
+     * @throws InvalidPriorityException
+     */
+    public function setPriority(int $priority): void {
+        if($priority < -20 || $priority > 19) {
+            throw new InvalidPriorityException('Invalid process priority (' . $priority . ')');
+        }
+        $this->settings['priority'] = $priority;
+    }
 
     /**
      * Enables stopping all processes when the parent/management process fatals
@@ -189,10 +189,10 @@ class MultiProcessor {
     }
 
     /**
-	 * Show a progress bar? Note that the time estimate is very rough.
-	 * It'll only be accurate when every handled item takes exactly the same time to process.
+     * Show a progress bar? Note that the time estimate is very rough.
+     * It'll only be accurate when every handled item takes exactly the same time to process.
      *
-	 * @todo Refactor this, inject a progress bar if you need one (same goes for logger)
+     * @todo Refactor this, inject a progress bar if you need one (same goes for logger)
      *
      * @param bool $useProgressBar
      */
@@ -210,14 +210,14 @@ class MultiProcessor {
      * @param Closure $callback
      * @param string $trigger always|once (always run callbacks before forking, or once before the first fork)
      *
-     * @throws Exception
+     * @throws UnsupportedException
      */
     public function addCloseResourceCallback(Closure $callback, string $trigger = 'always'): void {
         if(!in_array($trigger, [
             'once',
             'always'
         ])) {
-            throw new Exception('Unknown trigger (' . $trigger . ')');
+            throw new UnsupportedException('Unknown trigger (' . $trigger . ')');
         }
 
         if($trigger === 'once') {
@@ -226,13 +226,14 @@ class MultiProcessor {
         else {
             $this->closeResourceAlwaysCallbacks[] = $callback;
         }
-	}
+    }
 
     /**
      * @param int $signal
      *
      * @return string|null
-     * @throws Exception
+     *
+     * @throws UnsupportedException
      */
     private function getStringFromSignal(int $signal): ?string {
         switch($signal) {
@@ -241,7 +242,7 @@ class MultiProcessor {
             case SIGQUIT: return 'SIGQUIT'; // interrupt signal (CTRL+\)
             case SIGTERM: return 'SIGTERM'; // Default kill command
             default:
-                throw new Exception('Unknown signal string, add to method (' . $signal . ')');
+                throw new UnsupportedException('Unknown signal string, add to method (' . $signal . ')');
         }
 
         return null;
@@ -251,7 +252,7 @@ class MultiProcessor {
      * @param integer $signal
      * @param array $signalInfo
      *
-     * @throws Exception
+     * @throws ProcessException
      */
     public function signalHandler(int $signal, array $signalInfo): void {
         if($this->parentPID === posix_getpid()) {
@@ -273,7 +274,7 @@ class MultiProcessor {
                 return;
             }
 
-            throw new Exception('Caught undefined signal (' . $this->getStringFromSignal($signal) . ')');
+            throw new ProcessException('Caught undefined signal (' . $this->getStringFromSignal($signal) . ')');
         }
         else {
             // Child
@@ -292,18 +293,20 @@ class MultiProcessor {
                 exit;
             }
 
-            throw new Exception('Caught undefined signal (' . $this->getStringFromSignal($signal) . ')');
+            throw new ProcessException('Caught undefined signal (' . $this->getStringFromSignal($signal) . ')');
         }
     }
 
-	/**
-	 * Run the data through the processor.
-	 *
-	 * @throws Exception
-	 */
-	public function run(): void {
-		$this->data->generateChunks($this->settings['chunkSize']);
-		$this->timeStarted = time();
+    /**
+     * Run the data through the processor.
+     *
+     * @throws NonCleanExitException
+     * @throws ProcessException
+     * @throws UnsupportedException
+     */
+    public function run(): void {
+        $this->data->generateChunks($this->settings['chunkSize']);
+        $this->timeStarted = time();
 
         if($this->settings['useProgressBar']) {
             echo 'Chunks                    Progress                           ' . str_repeat(' ', strlen($this->data->count()) * 2 + 1) . 'Elapsed  / Remaining';
@@ -312,91 +315,91 @@ class MultiProcessor {
 
         $this->closeAllResources('once');
 
-		foreach($this->data as $chunk) {
+        foreach($this->data as $chunk) {
             if($this->stopProcessing) {
                 // We should not continue!
                 break;
             }
 
-			$processor = clone $this->processor;
-			$this->currentRunningChildren++;
+            $processor = clone $this->processor;
+            $this->currentRunningChildren++;
 
             $this->closeAllResources('always');
 
-			$pid = pcntl_fork();
-			if($pid === -1) {
-				throw new Exception('Could not fork');
-			}
-			else if($pid === 0) {
-				// This is a child.
+            $pid = pcntl_fork();
+            if($pid === -1) {
+                throw new ProcessException('Could not fork');
+            }
+            else if($pid === 0) {
+                // This is a child.
                 $this->seedRandomGenerator();
 
-				$processor->setData($chunk);
+                $processor->setData($chunk);
                 if($this->settings['stopOnParentFatal']) {
                     $processor->setParentAliveCheckCallback(
                         (new ParentIsAlive)->getCallback($this->parentPID)
                     );
                 }
-				$processor->initialize();
-				$processor->process();
-				$processor->finish();
-				$processor->exit();
-			}
-			else if($pid > 0) {
-				// This is the parent, $pid contains the child PID.
-				pcntl_setpriority($this->settings['priority'], $pid);
+                $processor->initialize();
+                $processor->process();
+                $processor->finish();
+                $processor->exit();
+            }
+            else if($pid > 0) {
+                // This is the parent, $pid contains the child PID.
+                pcntl_setpriority($this->settings['priority'], $pid);
 
-				$this->childPIDs[] = $pid;
+                $this->childPIDs[] = $pid;
 
-				if($this->currentRunningChildren >= $this->settings['concurrentChildren'] || ($this->currentRunningChildren > 0 && $this->gracefulShutdown)) {
-					$this->waitForChildren(false);
-				}
-				if($this->gracefulShutdown) {
-					// Should gracefully shut down, don't execute any more chunks.
+                if($this->currentRunningChildren >= $this->settings['concurrentChildren'] || ($this->currentRunningChildren > 0 && $this->gracefulShutdown)) {
+                    $this->waitForChildren(false);
+                }
+                if($this->gracefulShutdown) {
+                    // Should gracefully shut down, don't execute any more chunks.
                     exit(2);
-				}
-			}
-		}
+                }
+            }
+        }
 
-		if(isset($pid) && $pid > 0) {
-			// This is the parent,children will be exited before here.
-			$this->waitForChildren(true); // Wait for the remaining children.
-			if($this->settings['useProgressBar']) {
-				echo PHP_EOL;
-			}
-		}
-	}
+        if(isset($pid) && $pid > 0) {
+            // This is the parent,children will be exited before here.
+            $this->waitForChildren(true); // Wait for the remaining children.
+            if($this->settings['useProgressBar']) {
+                echo PHP_EOL;
+            }
+        }
+    }
 
-	/**
-	 * @return string
-	 */
-	private function getRunStatistics(): string {
-		$elapsedTime = time() - $this->timeStarted;
-		if(empty($this->chunksProcessed)) {
-			return  PHP_EOL . sprintf('%1$\' ' . (string) (strlen($this->data->count()) * 2 + 1) . 's', '0/' . $this->data->count()) . '    ' .
-			' [' . str_repeat(' ', 41) . '] ' . sprintf('%1$\' 6.2f%%', 0) .
-			'     00:00:00 / ??:??:??';
-		}
-		$averageTimePerChunk = $elapsedTime / $this->chunksProcessed;
-		$timeToGo = ceil($averageTimePerChunk * ($this->data->count() - $this->chunksProcessed));
+    /**
+     * @return string
+     */
+    private function getRunStatistics(): string {
+        $elapsedTime = time() - $this->timeStarted;
+        if(empty($this->chunksProcessed)) {
+            return  PHP_EOL . sprintf('%1$\' ' . (string) (strlen($this->data->count()) * 2 + 1) . 's', '0/' . $this->data->count()) . '    ' .
+            ' [' . str_repeat(' ', 41) . '] ' . sprintf('%1$\' 6.2f%%', 0) .
+            '     00:00:00 / ??:??:??';
+        }
+        $averageTimePerChunk = $elapsedTime / $this->chunksProcessed;
+        $timeToGo = ceil($averageTimePerChunk * ($this->data->count() - $this->chunksProcessed));
 
-		$s = $elapsedTime % 60;
-		$m = (($elapsedTime - $s) % 3600) / 60;
-		$h = ($elapsedTime - ($elapsedTime % 3600)) / 3600;
-		$elapsedTime = ($h < 10 ? '0' : '') . (string) $h . ':'  . ($m < 10 ? '0' : '') . (string) $m . ':' . ($s < 10 ? '0' : '') . (string) $s;
+        $s = $elapsedTime % 60;
+        $m = (($elapsedTime - $s) % 3600) / 60;
+        $h = ($elapsedTime - ($elapsedTime % 3600)) / 3600;
+        $elapsedTime = ($h < 10 ? '0' : '') . (string) $h . ':'  . ($m < 10 ? '0' : '') . (string) $m . ':' . ($s < 10 ? '0' : '') . (string) $s;
 
-		$s = $timeToGo % 60;
-		$m = (($timeToGo - $s) % 3600) / 60;
-		$h = ($timeToGo - ($timeToGo % 3600)) / 3600;
-		$timeToGo = ($h < 10 ? '0' : '') . (string) $h . ':'  . ($m < 10 ? '0' : '') . (string) $m . ':' . ($s < 10 ? '0' : '') . (string) $s;
+        $s = $timeToGo % 60;
+        $m = (($timeToGo - $s) % 3600) / 60;
+        $h = ($timeToGo - ($timeToGo % 3600)) / 3600;
+        $timeToGo = ($h < 10 ? '0' : '') . (string) $h . ':'  . ($m < 10 ? '0' : '') . (string) $m . ':' . ($s < 10 ? '0' : '') . (string) $s;
 
-		$percentage = $this->chunksProcessed * 100 / $this->data->count();
+        $percentage = $this->chunksProcessed * 100 / $this->data->count();
 
-//		return "\r" . $this->chunksProcessed . '/' . $this->data->count() . '    ' .
-		return "\r" . sprintf('%1$\' ' . (string) (strlen($this->data->count()) * 2 + 1) . 's', $this->chunksProcessed . '/' . $this->data->count()) . '    ' .
-		' [' . str_repeat('=', round($percentage / 2.5)) . '>' . str_repeat(' ', 40 - round($percentage / 2.5)) . '] ' . sprintf('%1$\' 6.2f%%', $percentage) .
-		'     ' . $elapsedTime . ' / ' . $timeToGo;
-	}
+//        return "\r" . $this->chunksProcessed . '/' . $this->data->count() . '    ' .
+        return "\r" . sprintf('%1$\' ' . (string) (strlen($this->data->count()) * 2 + 1) . 's', $this->chunksProcessed . '/' . $this->data->count()) . '    ' .
+        ' [' . str_repeat('=', round($percentage / 2.5)) . '>' . str_repeat(' ', 40 - round($percentage / 2.5)) . '] ' . sprintf('%1$\' 6.2f%%', $percentage) .
+        '     ' . $elapsedTime . ' / ' . $timeToGo;
+    }
 
     /**
      * @param bool $finalChildren If this current wait is on the final children, or in between chunks
@@ -416,7 +419,7 @@ class MultiProcessor {
                 $this->executeWaitForChildren($childPID, $status);
             }
         }
-	}
+    }
 
     /**
      * @param int $childPID
@@ -487,14 +490,14 @@ class MultiProcessor {
      *
      * @param string $trigger once|always
      *
-     * @throws Exception
+     * @throws UnsupportedException
      */
     private function closeAllResources(string $trigger): void {
         if(!in_array($trigger, [
             'once',
             'always'
         ])) {
-            throw new Exception('Unknown trigger (' . $trigger . ')');
+            throw new UnsupportedException('Unknown trigger (' . $trigger . ')');
         }
 
         if($trigger === 'once') {
@@ -509,7 +512,7 @@ class MultiProcessor {
                 $callback();
             }
         }
-	}
+    }
 
     /**
      * Seed the random generator.

@@ -3,4 +3,4 @@ namespace Jspeedz\MultiProcessor\Exception;
 
 use Exception;
 
-class StopOnFatalMethodException extends Exception {};
+class StopOnFatalMethodException extends Exception {}
