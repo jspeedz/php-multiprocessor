@@ -11,6 +11,7 @@ interface IteratorInterface extends \OuterIterator {
 	 */
     public function generateChunks(int $chunkSize): void;
 
+    #[\ReturnTypeWillChange]
 	public function getInnerIterator();
 
     /**

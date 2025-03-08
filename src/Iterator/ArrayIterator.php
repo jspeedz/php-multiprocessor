@@ -70,6 +70,7 @@ class ArrayIterator extends IteratorAbstract {
     /**
      * @return bool|mixed
      */
+    #[\ReturnTypeWillChange]
     public function rewind() {
         $this->pointer = $this->initialPointer;
         if(empty($this->data)) {
@@ -82,6 +83,7 @@ class ArrayIterator extends IteratorAbstract {
     /**
      * @return bool|array
      */
+    #[\ReturnTypeWillChange]
     public function current() {
         if(isset($this->data[$this->pointer])) {
             return $this->data[$this->pointer];
