@@ -54,6 +54,7 @@ class ArrayIterator extends IteratorAbstract {
     /**
      * @return boolean|mixed
      */
+    #[\ReturnTypeWillChange]
     public function next() {
         $this->pointer += 1;
 
