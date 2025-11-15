@@ -106,7 +106,7 @@ class MultiProcessor {
         $useTicks = !function_exists('pcntl_async_signals');
         if(!$useTicks) {
             pcntl_async_signals(true);
-            $useTicks = !pcntl_async_signals();
+            $useTicks = !pcntl_async_signals(null);
         }
         if($useTicks) {
             // Asynchronous signal handling is not supported, so usage of ticks is required, resulting in a bit more overhead.
@@ -231,11 +231,11 @@ class MultiProcessor {
     /**
      * @param int $signal
      *
-     * @return string|null
+     * @return string
      *
      * @throws UnsupportedException
      */
-    private function getStringFromSignal(int $signal): ?string {
+    private function getStringFromSignal(int $signal): string {
         switch($signal) {
             case SIGCHLD: return 'SIGCHLD'; // Child termination
             case SIGINT: return 'SIGINT'; // interrupt signal (CTRL+C)
@@ -244,8 +244,6 @@ class MultiProcessor {
             default:
                 throw new UnsupportedException('Unknown signal string, add to method (' . $signal . ')');
         }
-
-        return null;
     }
 
     /**
@@ -354,6 +352,7 @@ class MultiProcessor {
                 if($this->currentRunningChildren >= $this->settings['concurrentChildren'] || ($this->currentRunningChildren > 0 && $this->gracefulShutdown)) {
                     $this->waitForChildren(false);
                 }
+
                 if($this->gracefulShutdown) {
                     // Should gracefully shut down, don't execute any more chunks.
                     exit(2);
@@ -362,10 +361,16 @@ class MultiProcessor {
         }
 
         if(isset($pid) && $pid > 0) {
-            // This is the parent,children will be exited before here.
+            // This is the parent, children will have exited before here.
             $this->waitForChildren(true); // Wait for the remaining children.
             if($this->settings['useProgressBar']) {
                 echo PHP_EOL;
+            }
+
+            if($this->gracefulShutdown) {
+                // There was at least one child that crashed.
+                // Make sure the parent returns a non-zero exit code.
+                exit(2);
             }
         }
     }
