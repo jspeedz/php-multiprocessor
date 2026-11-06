@@ -40,6 +40,15 @@ Using the same resources like file handles, MySQL or any other network connectio
 - ext-posix
 - ext-json
 
+## Tests
+
+Install development dependencies and run the PHPUnit suite:
+
+```sh
+composer install
+composer run test
+```
+
 ## License
 GNU GPL 3, do whatever you like with this code.
 

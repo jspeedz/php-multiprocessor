@@ -1,5 +1,7 @@
 /.idea/
 /vendor/
 /composer.lock
+/.phpunit.cache/
+/.phpunit.results/
 # Datasource local storage ignored files
 dataSources.local.xml
