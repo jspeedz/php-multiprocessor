@@ -52,6 +52,17 @@ final class ArrayIteratorTest extends TestCase {
         self::assertNull($iterator->key());
     }
 
+    public function testNullItemsDoNotEndIterationOrSkipFollowingItems(): void {
+        $iterator = new ArrayIterator([10, null, 20]);
+
+        self::assertSame(null, $iterator->next());
+        self::assertTrue($iterator->valid());
+        self::assertNull($iterator->current());
+        self::assertSame(20, $iterator->next());
+        self::assertSame([10, null, 20], iterator_to_array($iterator));
+        self::assertSame([10, null, 20], iterator_to_array($iterator));
+    }
+
     public function testCallbackRunsOnEveryAdvanceIncludingPastTheLastItem(): void {
         $iterator = new ArrayIterator(['a', 'b']);
         $calls = 0;

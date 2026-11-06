@@ -55,7 +55,7 @@ class ArrayIterator extends IteratorAbstract {
 
         $this->executeIterationCallback();
 
-        if(isset($this->data[$this->pointer])) {
+        if(array_key_exists($this->pointer, $this->data)) {
             return $this->data[$this->pointer];
         }
         else {
@@ -85,7 +85,7 @@ class ArrayIterator extends IteratorAbstract {
      */
     #[\ReturnTypeWillChange]
     public function current(): mixed {
-        if($this->pointer !== null && isset($this->data[$this->pointer])) {
+        if($this->pointer !== null && array_key_exists($this->pointer, $this->data)) {
             return $this->data[$this->pointer];
         }
         else {
@@ -110,6 +110,6 @@ class ArrayIterator extends IteratorAbstract {
     }
 
     public function valid(): bool {
-        return $this->pointer !== null && isset($this->data[$this->pointer]);
+        return $this->pointer !== null && array_key_exists($this->pointer, $this->data);
     }
 }
