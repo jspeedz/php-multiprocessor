@@ -452,7 +452,7 @@ class MultiProcessor {
             }
         }
         else {
-            // Non clean exit
+            // Non-clean exit
             throw new NonCleanExitException('Non clean exit?');
         }
 
