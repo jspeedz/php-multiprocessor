@@ -385,12 +385,12 @@ final class MultiProcessorTest extends TestCase {
     #[TestWith([1])]
     #[TestWith([255])]
     #[TestWith([42])]
-    public function testNonzeroChildExitCanAllowRemainingChunks(int $exitCode): void {
+    public function testNonzeroChildExitAllowsRemainingChunksButExitsParentWithFailure(int $exitCode): void {
         [$status, $output] = $this->subprocess('$GLOBALS["forks"] = [101, 102];'
             . '$GLOBALS["waits"] = [[101, ' . ($exitCode << 8) . '], [102, 0]];'
             . '$manager->stopOnChildFatal(false); $manager->setChunkSize(2); $manager->run(); echo "returned;";');
-        self::assertSame(0, $status, $output);
-        self::assertSame('fork:101;priority:19:101;wait:101;fork:102;priority:19:102;wait:102;wait:-1;returned;', $output);
+        self::assertSame(2, $status, $output);
+        self::assertSame('fork:101;priority:19:101;wait:101;fork:102;priority:19:102;wait:102;wait:-1;', $output);
     }
 
     public function testGracefulShutdownDrainsPendingChildrenBeforeExiting(): void {

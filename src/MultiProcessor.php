@@ -89,6 +89,8 @@ class MultiProcessor {
 
     private bool $gracefulShutdown = false;
 
+    private bool $childFailed = false;
+
     /**
      * @var bool $stopProcessing If true, will kill the chunk loop
      */
@@ -159,6 +161,7 @@ class MultiProcessor {
 
     /**
      * Enables stopping all processes when a child process fatals
+     * Disabling this still makes the parent exit non-zero after all children finish if any child failed.
      *
      * @param bool $stopOnChildFatal = true
      */
@@ -340,6 +343,9 @@ class MultiProcessor {
 
                 if($this->gracefulShutdown) {
                     // Should gracefully shut down, don't execute any more chunks.
+                    if($this->currentRunningChildren > 0) {
+                        $this->waitForChildren(true);
+                    }
                     exit(2);
                 }
             }
@@ -352,9 +358,9 @@ class MultiProcessor {
                 echo PHP_EOL;
             }
 
-            if($this->gracefulShutdown) {
+            if($this->childFailed) {
                 // There was at least one child that crashed.
-                // Make sure the parent returns a non-zero exit code.
+                // Make sure the parent returns a non-zero exit code, even with graceful shutdown enabled.
                 exit(2);
             }
         }
@@ -426,11 +432,13 @@ class MultiProcessor {
             // Clean exit, exit code returned by processor in exit() statement
             $exitCode = pcntl_wexitstatus($status);
             if($exitCode !== 0) {
+                $this->childFailed = true;
+
                 // Child might have fataled.
                 if(in_array($exitCode, [
                     1,
                     255,
-                ])) {
+                ], true)) {
                     // PHP exit code of 1 or 255
                     if(!$this->gracefulShutdown && $this->settings['stopOnChildFatal']) {
                         if($this->settings['stopOnFatalMethod'] === StopOnFatalMethodEnum::GRACEFUL) {
