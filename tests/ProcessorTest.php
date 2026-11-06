@@ -30,6 +30,16 @@ final class ProcessorTest extends TestCase {
         self::assertSame(['a' => 1], iterator_to_array($processor->getData()));
     }
 
+    public function testParentCheckWithForeignTraversableDoesNotFail(): void {
+        $processor = $this->processor();
+        $processor->setParentAliveCheckCallback(function(): bool { return true; });
+        $data = new \ArrayIterator(['a' => 1]);
+        $processor->setData($data);
+
+        self::assertSame($data, $processor->getData());
+        self::assertSame(['a' => 1], iterator_to_array($processor->getData()));
+    }
+
     public static function callbackOrders(): iterable {
         yield 'callback before data' => [true];
         yield 'callback after data' => [false];

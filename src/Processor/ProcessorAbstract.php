@@ -3,6 +3,7 @@ namespace Jspeedz\MultiProcessor\Processor;
 
 use Closure;
 use Jspeedz\MultiProcessor\Iterator\ArrayIterator;
+use Jspeedz\MultiProcessor\Iterator\IteratorInterface;
 
 abstract class ProcessorAbstract implements ProcessorInterface {
     /**
@@ -37,7 +38,8 @@ abstract class ProcessorAbstract implements ProcessorInterface {
             $data = new ArrayIterator($data);
         }
 
-        if($this->parentAliveCheck !== null) {
+        // Only our own iterators support an iteration callback; other iterables are used as-is
+        if($this->parentAliveCheck !== null && $data instanceof IteratorInterface) {
             // If callback returns false it'll stop iterating
             $data->setIterationCallback($this->parentAliveCheck);
         }

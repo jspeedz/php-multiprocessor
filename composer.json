@@ -33,7 +33,8 @@
   },
   "require-dev": {
     "phpunit/phpunit": "^13.4",
-    "phpstan/phpstan": "^2.3"
+    "phpstan/phpstan": "^2.3",
+    "doctrine/dbal": "^4.5"
   },
   "scripts": {
     "test": "phpunit",
