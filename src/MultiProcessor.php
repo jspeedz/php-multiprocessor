@@ -410,34 +410,47 @@ class MultiProcessor {
             }
         }
         else {
-            // Wait until we can start the next fork
-            if(($childPID = pcntl_waitpid(0, $status)) !== -1) {
-                $this->executeWaitForChildren($childPID, $status);
+            // Wait until we can start the next fork: only one of our own children frees up a slot
+            while(($childPID = pcntl_waitpid(0, $status)) !== -1) {
+                if($this->executeWaitForChildren($childPID, $status)) {
+                    break;
+                }
             }
         }
     }
 
     /**
+     * @return bool False when the reaped process is not one of our forked children (like a popen() process),
+     *              in which case nothing is changed.
+     *
      * @throws NonCleanExitException
      */
-    private function executeWaitForChildren(int $childPID, int $status): void {
+    private function executeWaitForChildren(int $childPID, int $status): bool {
         // @todo return value, do logging with it?
+
+        if(!in_array($childPID, $this->childPIDs, true)) {
+            // Not a child we forked, so it never took up a slot or processed a chunk.
+            return false;
+        }
+
+        if(!pcntl_wifsignaled($status) && !pcntl_wifexited($status)) {
+            // Non-clean exit
+            throw new NonCleanExitException('Non clean exit?');
+        }
+
+        // The child is reaped, so forget its PID before anything below signals the remaining children:
+        // the kernel may hand this PID to an unrelated process.
+        $this->forgetChild($childPID);
 
         if(pcntl_wifsignaled($status)) {
             // Child was killed by a signal it didn't handle (segfault, OOM killer, external SIGKILL, ...).
             // Its chunk was not (fully) processed, so this is a child fatal.
-            $this->forgetChild($childPID);
-
             echo PHP_EOL . 'A child was terminated by unhandled signal ' . pcntl_wtermsig($status) . ' (see the SIG* PHP constants)' . PHP_EOL;
 
             $this->handleChildFatal();
         }
-        else if(pcntl_wifexited($status)) {
+        else {
             // Clean exit, exit code returned by processor in exit() statement
-            // The child is reaped, so forget its PID before anything below signals the remaining children:
-            // the kernel may hand this PID to an unrelated process.
-            $this->forgetChild($childPID);
-
             $exitCode = pcntl_wexitstatus($status);
             if($exitCode !== 0) {
                 $this->childFailed = true;
@@ -451,10 +464,6 @@ class MultiProcessor {
                 }
             }
         }
-        else {
-            // Non-clean exit
-            throw new NonCleanExitException('Non clean exit?');
-        }
 
         assert($this->currentRunningChildren > 0);
         $this->currentRunningChildren--;
@@ -467,6 +476,8 @@ class MultiProcessor {
         if($this->gracefulShutdown && $this->currentRunningChildren === 0) {
             echo PHP_EOL . 'Gracefully shut down because of a child process fatal' . PHP_EOL;
         }
+
+        return true;
     }
 
     /**
@@ -490,6 +501,11 @@ class MultiProcessor {
             $signal = $this->settings['stopOnFatalMethod'] === StopOnFatalMethodEnum::NORMAL ? SIGTERM : SIGKILL;
             foreach($this->childPIDs as $runningChildPID) {
                 posix_kill($runningChildPID, $signal);
+            }
+
+            // Reap the signalled children, so none is left running (or as a zombie) once the parent exits.
+            foreach($this->childPIDs as $runningChildPID) {
+                pcntl_waitpid($runningChildPID, $status);
             }
 
             exit(1);

@@ -35,11 +35,11 @@ class ProcessorCores {
             }
         }
         else {
-            $process = @popen('sysctl -a', 'rb');
+            $process = @popen('sysctl -n hw.ncpu', 'rb');
             if(false !== $process) {
                 $output = stream_get_contents($process);
-                if($output !== false && preg_match('/hw.ncpu: (\d+)/', $output, $matches)) {
-                    $cores = intval($matches[1]);
+                if($output !== false) {
+                    $cores = intval(trim($output));
                 }
                 pclose($process);
             }
