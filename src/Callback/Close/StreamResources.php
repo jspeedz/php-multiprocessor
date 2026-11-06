@@ -19,17 +19,24 @@ class StreamResources {
                 switch(get_resource_type($resource)) {
                     case 'stream':
                         $meta = stream_get_meta_data($resource);
-                        if(isset($meta['uri']) && !in_array($meta['uri'], [
+                        if(isset($meta['uri']) && in_array($meta['uri'], [
                             'php://stdin',
                             'php://stdout',
                             'php://stderr',
-                            'php://output',
                             'php://output',
                             'php://input',
                             'php://filter',
                             'php://memory',
                             'php://temp',
                         ], true)) {
+                            // Leave PHP's standard and internal streams open.
+                            continue 2;
+                        }
+                        if(!isset($meta['uri']) && in_array($meta['stream_type'], ['MEMORY', 'TEMP'], true)) {
+                            // php://input and php://temp also create internal streams without a URI.
+                            continue 2;
+                        }
+                        if(isset($meta['uri'])) {
                             switch($meta['wrapper_type']) {
                                 case 'plainfile':
                                 case 'http':
@@ -50,7 +57,7 @@ class StreamResources {
                                     break;
                             }
                         }
-                        else if(!isset($meta['uri']) && $meta['stream_type'] === 'STDIO') {
+                        else if($meta['stream_type'] === 'STDIO') {
                             // Assume this is a process handle, like popen(), fsockopen() etc.
                             pclose($resource);
                         }

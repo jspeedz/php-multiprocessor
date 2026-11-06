@@ -16,7 +16,7 @@ $randomHashGenerator = function() {
 
 $array = array_map(
     $randomHashGenerator,
-    array_fill(0, 100, null)
+    array_fill(0, 10000, null)
 );
 
 $data = new ArrayIterator($array);

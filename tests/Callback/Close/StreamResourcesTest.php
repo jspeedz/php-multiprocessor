@@ -99,6 +99,9 @@ final class StreamResourcesTest extends TestCase {
 
         self::assertSame([$remainsOpen, $error], $this->runIsolated($body, <<<'PHP'
             function stream_get_meta_data($resource): array {
+                if(in_array($resource, [STDIN, STDOUT, STDERR], true)) {
+                    return \stream_get_meta_data($resource);
+                }
                 return $GLOBALS['metadata'];
             }
             PHP));
@@ -140,28 +143,24 @@ final class StreamResourcesTest extends TestCase {
             PHP));
     }
 
-    public static function unsupportedStreams(): iterable {
-        yield 'memory' => ['php://memory'];
-        yield 'temporary' => ['php://temp'];
+    public static function excludedStreams(): iterable {
+        yield 'standard input' => ['php://stdin', 'r'];
+        yield 'standard output' => ['php://stdout', 'w'];
+        yield 'standard error' => ['php://stderr', 'w'];
+        yield 'input' => ['php://input', 'r'];
+        yield 'output' => ['php://output', 'w'];
+        yield 'memory' => ['php://memory', 'r+'];
+        yield 'temporary' => ['php://temp', 'r+'];
     }
 
-    #[DataProvider('unsupportedStreams')]
-    public function testCallbackRejectsExcludedStreamUris(string $uri): void {
-        $result = $this->runIsolated('$stream = fopen(' . var_export($uri, true) . ", 'r+');" . <<<'PHP'
-            try {
-                (new StreamResources())->getCallback()();
-                return null;
-            }
-            catch (\Jspeedz\MultiProcessor\Exception\UnsupportedException $exception) {
-                return [get_class($exception), $exception->getMessage(), is_resource($stream)];
-            }
-            PHP);
-
-        self::assertIsArray($result);
-        self::assertSame(UnsupportedException::class, $result[0]);
-        self::assertStringStartsWith('Unknown stream type (', $result[1]);
-        self::assertStringContainsString(str_replace('/', '\\/', $uri), $result[1]);
-        self::assertTrue($result[2]);
+    #[DataProvider('excludedStreams')]
+    public function testCallbackLeavesExcludedStreamUrisOpen(string $uri, string $mode): void {
+        self::assertTrue($this->runIsolated('$stream = fopen(' . var_export($uri, true) . ', ' . var_export($mode, true) . ');' . <<<'PHP'
+            $callback = (new StreamResources())->getCallback();
+            $callback();
+            $callback();
+            return is_resource($stream) && is_resource(STDIN) && is_resource(STDOUT) && is_resource(STDERR);
+            PHP));
     }
 
     /**
@@ -189,8 +188,7 @@ final class StreamResourcesTest extends TestCase {
             }
             $code .= 'require ' . var_export(dirname(__DIR__, 2) . '/fixtures/subprocess-coverage.php', true) . ';';
         }
-        $code .= 'fclose(STDIN); fclose(STDOUT); fclose(STDERR);'
-            . 'try { $result = (function() {' . $body . '})();'
+        $code .= 'try { $result = (function() {' . $body . '})();'
             . 'file_put_contents(' . var_export($resultFile, true) . ', json_encode(["result" => $result], JSON_THROW_ON_ERROR));'
             . '} catch (Throwable $exception) {'
             . 'file_put_contents(' . var_export($resultFile, true) . ', json_encode(["error" => (string) $exception], JSON_THROW_ON_ERROR)); exit(1); }}';

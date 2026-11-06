@@ -12,16 +12,16 @@ class TestProcessor extends ProcessorAbstract {
 
     public function process(): void {
         foreach ($this->getData() as $randomMd5Hash) {
-            if (defined('PASSWORD_ARGON2I')) {
-                $algorithm = PASSWORD_ARGON2I;
-                $options = [];
-            }
-            else {
+//            if (defined('PASSWORD_ARGON2I')) {
+//                $algorithm = PASSWORD_ARGON2I;
+//                $options = [];
+//            }
+//            else {
                 $algorithm = PASSWORD_BCRYPT;
                 $options = [
                     'cost' => rand(4, 10),
                 ];
-            }
+//            }
 
             $hashedString = password_hash($randomMd5Hash, $algorithm, $options);
 
