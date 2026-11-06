@@ -307,7 +307,7 @@ class MultiProcessor {
         $this->timeStarted = time();
 
         if($this->settings['useProgressBar']) {
-            echo 'Chunks                    Progress                           ' . str_repeat(' ', strlen($this->data->count()) * 2 + 1) . 'Elapsed  / Remaining';
+            echo 'Chunks                    Progress                           ' . str_repeat(' ', strlen((string) $this->data->count()) * 2 + 1) . 'Elapsed  / Remaining';
             echo "\r" . $this->getRunStatistics();
         }
 
@@ -381,7 +381,7 @@ class MultiProcessor {
     private function getRunStatistics(): string {
         $elapsedTime = time() - $this->timeStarted;
         if(empty($this->chunksProcessed)) {
-            return  PHP_EOL . sprintf('%1$\' ' . (string) (strlen($this->data->count()) * 2 + 1) . 's', '0/' . $this->data->count()) . '    ' .
+            return  PHP_EOL . sprintf('%1$\' ' . (strlen((string) $this->data->count()) * 2 + 1) . 's', '0/' . $this->data->count()) . '    ' .
             ' [' . str_repeat(' ', 41) . '] ' . sprintf('%1$\' 6.2f%%', 0) .
             '     00:00:00 / ??:??:??';
         }
@@ -396,13 +396,13 @@ class MultiProcessor {
         $s = $timeToGo % 60;
         $m = (($timeToGo - $s) % 3600) / 60;
         $h = ($timeToGo - ($timeToGo % 3600)) / 3600;
-        $timeToGo = ($h < 10 ? '0' : '') . (string) $h . ':'  . ($m < 10 ? '0' : '') . (string) $m . ':' . ($s < 10 ? '0' : '') . (string) $s;
+        $timeToGo = ($h < 10 ? '0' : '') . $h . ':'  . ($m < 10 ? '0' : '') . $m . ':' . ($s < 10 ? '0' : '') . $s;
 
         $percentage = $this->chunksProcessed * 100 / $this->data->count();
 
 //        return "\r" . $this->chunksProcessed . '/' . $this->data->count() . '    ' .
-        return "\r" . sprintf('%1$\' ' . (string) (strlen($this->data->count()) * 2 + 1) . 's', $this->chunksProcessed . '/' . $this->data->count()) . '    ' .
-        ' [' . str_repeat('=', round($percentage / 2.5)) . '>' . str_repeat(' ', 40 - round($percentage / 2.5)) . '] ' . sprintf('%1$\' 6.2f%%', $percentage) .
+        return "\r" . sprintf('%1$\' ' . (strlen((string) $this->data->count()) * 2 + 1) . 's', $this->chunksProcessed . '/' . $this->data->count()) . '    ' .
+        ' [' . str_repeat('=', (int) round($percentage / 2.5)) . '>' . str_repeat(' ', 40 - (int) round($percentage / 2.5)) . '] ' . sprintf('%1$\' 6.2f%%', $percentage) .
         '     ' . $elapsedTime . ' / ' . $timeToGo;
     }
 
