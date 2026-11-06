@@ -3,24 +3,27 @@ namespace Jspeedz\MultiProcessor\Utility;
 
 class ProcessorCores {
     /**
+     * Cached core count. 0 means "not detected yet"; set it to a positive value to skip detection.
+     *
      * @var non-negative-int
      */
     public static int $numberOfCores = 0;
 
     /**
-     * @return non-negative-int
+     * Returns the number of processor cores, falling back to 1 when it cannot be detected.
+     *
+     * @return positive-int
      */
     public static function getNumberOfCores(): int {
-        if(!empty(self::$numberOfCores)) {
+        if(self::$numberOfCores > 0) {
             return self::$numberOfCores;
         }
 
-        self::$numberOfCores = 1;
+        $cores = 0;
         if(is_file('/proc/cpuinfo')) {
             $cpuInfo = file_get_contents('/proc/cpuinfo');
             if($cpuInfo !== false) {
-                preg_match_all('/^processor/m', $cpuInfo, $matches);
-                self::$numberOfCores = count($matches[0]);
+                $cores = preg_match_all('/^processor/m', $cpuInfo);
             }
         }
         else if('win' == strtolower(substr(PHP_OS, 0, 3))) {
@@ -28,8 +31,6 @@ class ProcessorCores {
             if(false !== $process) {
                 fgets($process);
                 $cores = intval(fgets($process));
-                assert($cores >= 0);
-                self::$numberOfCores = $cores;
                 pclose($process);
             }
         }
@@ -37,15 +38,15 @@ class ProcessorCores {
             $process = @popen('sysctl -a', 'rb');
             if(false !== $process) {
                 $output = stream_get_contents($process);
-                preg_match('/hw.ncpu: (\d+)/', $output, $matches);
-                if($matches) {
+                if($output !== false && preg_match('/hw.ncpu: (\d+)/', $output, $matches)) {
                     $cores = intval($matches[1]);
-                    assert($cores >= 0);
-                    self::$numberOfCores = $cores;
                 }
                 pclose($process);
             }
         }
+
+        // Could not be detected (or nonsensical result): default to a single core.
+        self::$numberOfCores = max(1, (int) $cores);
 
         return self::$numberOfCores;
     }

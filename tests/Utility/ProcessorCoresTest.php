@@ -28,8 +28,8 @@ final class ProcessorCoresTest extends TestCase {
         yield 'one processor' => ["processor\t: 0\nmodel name\t: Test CPU\n", 1];
         yield 'multiple processors' => ["processor\t: 0\n\nprocessor\t: 1\n\nprocessor\t: 2\n", 3];
         yield 'only line starts count' => ["model name: processor\n processor: 0\nprocessor: 1\n", 1];
-        yield 'empty file' => ['', 0];
-        yield 'no processor entries' => ["model name: Test CPU\n", 0];
+        yield 'empty file falls back to one' => ['', 1];
+        yield 'no processor entries falls back to one' => ["model name: Test CPU\n", 1];
         yield 'unreadable file' => [false, 1];
     }
 
@@ -61,19 +61,21 @@ final class ProcessorCoresTest extends TestCase {
         self::assertCount(4, ProcessorCoresPlatform::$calls);
     }
 
-    public function testZeroCoreCountIsRetried(): void {
-        self::assertSame(0, ProcessorCores::getNumberOfCores());
-
-        ProcessorCoresPlatform::$cpuInfo = "processor: 0\n";
+    public function testUndetectableCoreCountFallsBackToOneAndIsCached(): void {
+        // Empty /proc/cpuinfo: nothing detected
         self::assertSame(1, ProcessorCores::getNumberOfCores());
-        self::assertCount(4, ProcessorCoresPlatform::$calls);
+        self::assertSame(1, ProcessorCores::$numberOfCores);
+
+        ProcessorCoresPlatform::$cpuInfo = "processor: 0\nprocessor: 1\n";
+        self::assertSame(1, ProcessorCores::getNumberOfCores());
+        self::assertCount(2, ProcessorCoresPlatform::$calls);
     }
 
     public static function windowsOutput(): iterable {
         yield 'one core' => ["NumberOfCores\r\n1\r\n", 1];
         yield 'multiple digits and whitespace' => ["NumberOfCores\r\n  32  \r\n", 32];
-        yield 'zero cores' => ["NumberOfCores\r\n0\r\n", 0];
-        yield 'missing value' => ["NumberOfCores\r\n", 0];
+        yield 'zero cores falls back to one' => ["NumberOfCores\r\n0\r\n", 1];
+        yield 'missing value falls back to one' => ["NumberOfCores\r\n", 1];
     }
 
     #[DataProvider('windowsOutput')]
@@ -88,7 +90,7 @@ final class ProcessorCoresTest extends TestCase {
     public static function sysctlOutput(): iterable {
         yield 'one core' => ["hw.ncpu: 1\n", 1];
         yield 'multiple digits' => ["hw.machine: arm64\nhw.ncpu: 16\nhw.memsize: 123456\n", 16];
-        yield 'zero cores' => ["hw.ncpu: 0\n", 0];
+        yield 'zero cores falls back to one' => ["hw.ncpu: 0\n", 1];
         yield 'no matching value' => ["hw.machine: arm64\n", 1];
         yield 'empty output' => ['', 1];
     }
