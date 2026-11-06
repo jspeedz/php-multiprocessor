@@ -5,3 +5,4 @@
 /.phpunit.results/
 # Datasource local storage ignored files
 dataSources.local.xml
+/.phpstan.cache/

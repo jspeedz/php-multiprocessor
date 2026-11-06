@@ -86,7 +86,7 @@ class ArrayIterator extends IteratorAbstract {
      */
     #[\ReturnTypeWillChange]
     public function current() {
-        if(isset($this->data[$this->pointer])) {
+        if($this->pointer !== null && isset($this->data[$this->pointer])) {
             return $this->data[$this->pointer];
         }
         else {
@@ -95,9 +95,9 @@ class ArrayIterator extends IteratorAbstract {
     }
 
     /**
-     * @return integer
+     * @return integer|null Null when there is no data to iterate
      */
-    public function key(): int {
+    public function key(): ?int {
         return $this->pointer;
     }
 
@@ -114,6 +114,6 @@ class ArrayIterator extends IteratorAbstract {
      * @return boolean
      */
     public function valid(): bool {
-        return isset($this->data[$this->pointer]);
+        return $this->pointer !== null && isset($this->data[$this->pointer]);
     }
 }

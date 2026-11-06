@@ -10,7 +10,12 @@ abstract class IteratorAbstract implements IteratorInterface, Countable {
      */
     protected $iterationCallback;
 
-    public function getInnerIterator() {}
+    /**
+     * This iterator does not wrap another iterator.
+     */
+    public function getInnerIterator(): ?\Iterator {
+        return null;
+    }
 
     /**
      * @param Closure $callback
