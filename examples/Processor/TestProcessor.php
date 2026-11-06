@@ -12,7 +12,7 @@ class TestProcessor extends ProcessorAbstract {
 
     public function process(): void {
         foreach ($this->getData() as $randomMd5Hash) {
-            if (version_compare(PHP_VERSION, '7.2.0') >= 0 && defined('PASSWORD_ARGON2I')) {
+            if (defined('PASSWORD_ARGON2I')) {
                 $algorithm = PASSWORD_ARGON2I;
                 $options = [];
             }

@@ -15,7 +15,7 @@ Using the same resources like file handles, MySQL or any other network connectio
     ```php
     $multiProcessor->addCloseResourceCallback(
         (new \Jspeedz\MultiProcessor\Callback\Close\StreamResources)->getCallback(),
-        'once'
+        ResourceCloseCallbackTriggerEnum::ONCE,
     );
     
     // Run directly after
@@ -35,7 +35,7 @@ Using the same resources like file handles, MySQL or any other network connectio
 
 ## Prerequisites/Requirements
 - Linux or OSX
-- PHP 7.1.0 or greater
+- PHP 8.4.27 or greater
 - ext-pcntl
 - ext-posix
 - ext-json

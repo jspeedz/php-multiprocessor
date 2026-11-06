@@ -3,103 +3,98 @@ namespace Jspeedz\MultiProcessor;
 
 use Closure;
 use Jspeedz\MultiProcessor\Callback\Iterator\ParentIsAlive;
+use Jspeedz\MultiProcessor\Enum\ResourceCloseCallbackTriggerEnum;
+use Jspeedz\MultiProcessor\Enum\StopOnFatalMethodEnum;
 use Jspeedz\MultiProcessor\Exception\InvalidPriorityException;
 use Jspeedz\MultiProcessor\Exception\NonCleanExitException;
 use Jspeedz\MultiProcessor\Exception\ProcessException;
-use Jspeedz\MultiProcessor\Exception\StopOnFatalMethodException;
 use Jspeedz\MultiProcessor\Exception\UnsupportedException;
+use Jspeedz\MultiProcessor\Iterator\IteratorAbstract;
+use Jspeedz\MultiProcessor\Processor\ProcessorAbstract;
+use Random\RandomException;
 
 /**
  * @todo Logging via monolog
  * @todo Progress bar, inject. Use package?
- * @todo Tests (how do I unit test code that forks? :/)
  */
 class MultiProcessor {
-    /**
-     * @var integer
-     */
-    protected $parentPID;
+    protected int $parentPID;
 
     /**
-     * @var array
+     * @var array{
+     *     priority: int,
+     *     concurrentChildren: positive-int,
+     *     chunkSize: positive-int,
+     *     stopOnParentFatal: bool,
+     *     stopOnChildFatal: bool,
+     *     stopOnFatalMethod: StopOnFatalMethodEnum,
+     *     useProgressBar: bool,
+     * }
      */
-    private $settings = [
+    private array $settings = [
         'priority' => 19,
         'concurrentChildren' => 1,
         'chunkSize' => 10,
         'stopOnParentFatal' => true,
         'stopOnChildFatal' => true,
-        'stopOnFatalMethod' => 'graceful',
+        'stopOnFatalMethod' => StopOnFatalMethodEnum::GRACEFUL,
         'useProgressBar' => true,
     ];
 
     /**
      * @var Closure[]
      */
-    private $closeResourceOnceCallbacks = [];
+    private array $closeResourceOnceCallbacks = [];
 
     /**
      * @var Closure[]
      */
-    private $closeResourceAlwaysCallbacks = [];
+    private array $closeResourceAlwaysCallbacks = [];
+
+    private IteratorAbstract $data;
+
+    private ProcessorAbstract $processor;
 
     /**
-     * @var Iterator\IteratorAbstract
+     * @var non-negative-int
      */
-    private $data;
-
-    /**
-     * @var Processor\ProcessorAbstract
-     */
-    private $processor;
-
-    /**
-     * @var integer
-     */
-    private $currentRunningChildren = 0;
+    private int $currentRunningChildren = 0;
 
     /**
      * Signals to bind to the signal handler.
      * Note: can't bind to SIGKILL as this event can't be overridden, it's just killed.
      *
-     * @var integer[]
+     * @var list<int>
      */
-    private $signalHandlerEvent = [
+    private array $signalHandlerEvent = [
         SIGTERM,
         SIGINT,
         SIGCHLD
     ];
 
     /**
-     * @var integer[]
+     * @var int[]
      */
-    private $childPIDs = [];
+    private array $childPIDs = [];
 
     /**
-     * @var integer
+     * @var non-negative-int
      */
-    private $chunksProcessed = 0;
+    private int $chunksProcessed = 0;
 
     /**
-     * @var integer
+     * @var positive-int
      */
-    private $timeStarted;
+    private int $timeStarted;
+
+    private bool $gracefulShutdown = false;
 
     /**
-     * @var boolean
+     * @var bool $stopProcessing If true, will kill the chunk loop
      */
-    private $gracefulShutdown = false;
+    private bool $stopProcessing = false;
 
-    /**
-     * @var boolean $stopProcessing If true, will kill the chunk loop
-     */
-    private $stopProcessing = false;
-
-    /**
-     * @param Iterator\IteratorAbstract $data
-     * @param Processor\ProcessorAbstract $processor
-     */
-    public function __construct(Iterator\IteratorAbstract $data, Processor\ProcessorAbstract $processor) {
+    public function __construct(IteratorAbstract $data, ProcessorAbstract $processor) {
         $this->data = $data;
         $this->processor = $processor;
 
@@ -124,7 +119,7 @@ class MultiProcessor {
     /**
      * The number of processes to fork at any given moment.
      *
-     * @param integer $children
+     * @param positive-int $children
      */
     public function setMaximumConcurrentChildren(int $children): void {
         $this->settings['concurrentChildren'] = $children;
@@ -133,7 +128,7 @@ class MultiProcessor {
     /**
      * Items to handle per chunk/child.
      *
-     * @param integer $chunkSize
+     * @param positive-int $chunkSize
      */
     public function setChunkSize(int $chunkSize): void {
         $this->settings['chunkSize'] = $chunkSize;
@@ -142,7 +137,7 @@ class MultiProcessor {
     /**
      * Set the priority for the child processes. Defaults to 19 if not set.
      *
-     * @param integer $priority −20 is the highest priority and 19 the lowest.
+     * @param int<-20, 19> $priority −20 is the highest priority and 19 the lowest.
      *
      * @throws InvalidPriorityException
      */
@@ -174,17 +169,11 @@ class MultiProcessor {
     /**
      * Enables stopping all processes when a child process fatals.
      *
-     * @param string $stopOnFatalMethod = graceful|normal|immediate `graceful` will let running children complete, `normal` will kill all children with SIGTERM, `immediate` will kill all children instantly SIGKILL
-     * @throws StopOnFatalMethodException
+     * @param StopOnFatalMethodEnum $stopOnFatalMethod = `graceful` will let running children complete, `normal` will kill all children with SIGTERM, `immediate` will kill all children instantly SIGKILL
      */
-    public function stopOnFatalMethod(string $stopOnFatalMethod = 'graceful'): void {
-        if(!in_array($stopOnFatalMethod, [
-            'graceful',
-            'normal',
-            'immediate',
-        ])) {
-            throw new StopOnFatalMethodException('Unknown stop on fatal method (' . $stopOnFatalMethod . ')');
-        }
+    public function stopOnFatalMethod(
+        StopOnFatalMethodEnum $stopOnFatalMethod = StopOnFatalMethodEnum::GRACEFUL,
+    ): void {
         $this->settings['stopOnFatalMethod'] = $stopOnFatalMethod;
     }
 
@@ -193,8 +182,6 @@ class MultiProcessor {
      * It'll only be accurate when every handled item takes exactly the same time to process.
      *
      * @todo Refactor this, inject a progress bar if you need one (same goes for logger)
-     *
-     * @param bool $useProgressBar
      */
     public function useProgressBar(bool $useProgressBar = true): void {
         $this->settings['useProgressBar'] = $useProgressBar;
@@ -208,19 +195,13 @@ class MultiProcessor {
      * They will try to use the same handles/connections and collide.
      *
      * @param Closure $callback
-     * @param string $trigger always|once (always run callbacks before forking, or once before the first fork)
-     *
-     * @throws UnsupportedException
+     * @param ResourceCloseCallbackTriggerEnum $trigger always|once (always run callbacks before forking, or once before the first fork)
      */
-    public function addCloseResourceCallback(Closure $callback, string $trigger = 'always'): void {
-        if(!in_array($trigger, [
-            'once',
-            'always'
-        ])) {
-            throw new UnsupportedException('Unknown trigger (' . $trigger . ')');
-        }
-
-        if($trigger === 'once') {
+    public function addCloseResourceCallback(
+        Closure $callback,
+        ResourceCloseCallbackTriggerEnum $trigger = ResourceCloseCallbackTriggerEnum::ALWAYS,
+    ): void {
+        if($trigger === ResourceCloseCallbackTriggerEnum::ONCE) {
             $this->closeResourceOnceCallbacks[] = $callback;
         }
         else {
@@ -236,30 +217,30 @@ class MultiProcessor {
      * @throws UnsupportedException
      */
     private function getStringFromSignal(int $signal): string {
-        switch($signal) {
-            case SIGCHLD: return 'SIGCHLD'; // Child termination
-            case SIGINT: return 'SIGINT'; // interrupt signal (CTRL+C)
-            case SIGQUIT: return 'SIGQUIT'; // interrupt signal (CTRL+\)
-            case SIGTERM: return 'SIGTERM'; // Default kill command
-            default:
-                throw new UnsupportedException('Unknown signal string, add to method (' . $signal . ')');
-        }
+        return match($signal) {
+            SIGCHLD => 'SIGCHLD',
+            SIGINT => 'SIGINT',
+            SIGQUIT => 'SIGQUIT',
+            SIGTERM => 'SIGTERM',
+            default => throw new UnsupportedException('Unknown signal string, add to method (' . $signal . ')'),
+        };
     }
 
     /**
-     * @param integer $signal
-     * @param array $signalInfo
+     * @param non-negative-int $signo The signal being handled
+     * @param mixed $siginfo If operating systems supports siginfo_t structures, this will be an array of signal information dependent on the signal
      *
      * @throws ProcessException
+     * @throws UnsupportedException
      */
-    public function signalHandler(int $signal, array $signalInfo): void {
+    public function signalHandler(int $signo, mixed $siginfo): void {
         if($this->parentPID === posix_getpid()) {
             // Parent
-            if(in_array($signal, [
+            if(in_array($signo, [
                 SIGTERM, // Default kill command
                 SIGQUIT, // interrupt signal (CTRL+\)
                 SIGINT, // interrupt signal (CTRL+C)
-            ])) {
+            ], true)) {
                 $this->stopProcessing = true;
                 foreach($this->childPIDs as $childPID) {
                     echo posix_kill($childPID, SIGKILL);
@@ -267,31 +248,30 @@ class MultiProcessor {
 
                 exit(1);
             }
-            if($signal === SIGCHLD) {
+            if($signo === SIGCHLD) {
                 // Child has terminated, nothing to do here
                 return;
             }
 
-            throw new ProcessException('Caught undefined signal (' . $this->getStringFromSignal($signal) . ')');
+            throw new ProcessException('Caught undefined signal (' . $this->getStringFromSignal($signo) . ')');
         }
         else {
             // Child
-            if(in_array($signal, [
-                SIGCHLD, // Terminated myself (should be a signal to the parent, but somehow sent to child as well)..
-            ])) {
+            if($signo === SIGCHLD) {
+                // Terminated myself (should be a signal to the parent, but somehow sent to child as well)..
                 // Nothing to do here
                 return;
             }
-            else if(in_array($signal, [
+            else if(in_array($signo, [
                 SIGTERM, // Default kill command
                 SIGQUIT, // interrupt signal (CTRL+\)
                 SIGINT, // interrupt signal (CTRL+C)
-            ])) {
+            ], true)) {
                 // Let's kill myself
                 exit;
             }
 
-            throw new ProcessException('Caught undefined signal (' . $this->getStringFromSignal($signal) . ')');
+            throw new ProcessException('Caught undefined signal (' . $this->getStringFromSignal($signo) . ')');
         }
     }
 
@@ -301,6 +281,7 @@ class MultiProcessor {
      * @throws NonCleanExitException
      * @throws ProcessException
      * @throws UnsupportedException
+     * @throws RandomException
      */
     public function run(): void {
         $this->data->generateChunks($this->settings['chunkSize']);
@@ -311,7 +292,7 @@ class MultiProcessor {
             echo "\r" . $this->getRunStatistics();
         }
 
-        $this->closeAllResources('once');
+        $this->closeAllResources(ResourceCloseCallbackTriggerEnum::ONCE);
 
         foreach($this->data as $chunk) {
             if($this->stopProcessing) {
@@ -319,10 +300,14 @@ class MultiProcessor {
                 break;
             }
 
+            if(!is_iterable($chunk)) {
+                throw new UnsupportedException('Each data chunk must be iterable');
+            }
+
             $processor = clone $this->processor;
             $this->currentRunningChildren++;
 
-            $this->closeAllResources('always');
+            $this->closeAllResources(ResourceCloseCallbackTriggerEnum::ALWAYS);
 
             $pid = pcntl_fork();
             if($pid === -1) {
@@ -427,12 +412,9 @@ class MultiProcessor {
     }
 
     /**
-     * @param int $childPID
-     * @param int $status
-     *
      * @throws NonCleanExitException
      */
-    private function executeWaitForChildren(int $childPID, int $status) {
+    private function executeWaitForChildren(int $childPID, int $status): void {
         // @todo return value, do logging with it?
 
         if(pcntl_wifsignaled($status)) {
@@ -451,7 +433,7 @@ class MultiProcessor {
                 ])) {
                     // PHP exit code of 1 or 255
                     if(!$this->gracefulShutdown && $this->settings['stopOnChildFatal']) {
-                        if($this->settings['stopOnFatalMethod'] === 'graceful') {
+                        if($this->settings['stopOnFatalMethod'] === StopOnFatalMethodEnum::GRACEFUL) {
                             echo PHP_EOL . 'A child fataled, shutting down ' . count($this->childPIDs) . ' processes (currently running children will complete)' . PHP_EOL;
 
                             $this->gracefulShutdown = true;
@@ -459,7 +441,7 @@ class MultiProcessor {
                         else {
                             echo PHP_EOL . 'A child fataled, shutting down ' . count($this->childPIDs) . ' processes (currently running children will be terminated)' . PHP_EOL;
 
-                            $signal = $this->settings['stopOnFatalMethod'] === 'normal' ? SIGTERM : SIGKILL;
+                            $signal = $this->settings['stopOnFatalMethod'] === StopOnFatalMethodEnum::NORMAL ? SIGTERM : SIGKILL;
                             foreach($this->childPIDs as $childPID) {
                                 posix_kill($childPID, $signal);
                             }
@@ -478,6 +460,7 @@ class MultiProcessor {
             throw new NonCleanExitException('Non clean exit?');
         }
 
+        assert($this->currentRunningChildren > 0);
         $this->currentRunningChildren--;
         $this->chunksProcessed++;
 
@@ -492,20 +475,9 @@ class MultiProcessor {
 
     /**
      * Close resources/connections so they will have to be re-initialized for all children.
-     *
-     * @param string $trigger once|always
-     *
-     * @throws UnsupportedException
      */
-    private function closeAllResources(string $trigger): void {
-        if(!in_array($trigger, [
-            'once',
-            'always'
-        ])) {
-            throw new UnsupportedException('Unknown trigger (' . $trigger . ')');
-        }
-
-        if($trigger === 'once') {
+    private function closeAllResources(ResourceCloseCallbackTriggerEnum $trigger): void {
+        if($trigger === ResourceCloseCallbackTriggerEnum::ONCE) {
             if(count($this->closeResourceOnceCallbacks) > 0) {
                 foreach($this->closeResourceOnceCallbacks as $callback) {
                     $callback();
@@ -522,6 +494,8 @@ class MultiProcessor {
     /**
      * Seed the random generator.
      * Without doing this some PHP methods that rely on the random generator might return the same value for every fork.
+     *
+     * @throws RandomException
      */
     private function seedRandomGenerator(): void {
         // random_int() gets a random seed via for example /dev/urandom, so this will work after forking too.

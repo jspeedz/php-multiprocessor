@@ -1,5 +1,6 @@
 <?php
 
+use Jspeedz\MultiProcessor\Enum\ResourceCloseCallbackTriggerEnum;
 use Jspeedz\MultiProcessor\Iterator\ArrayIterator;
 use Jspeedz\MultiProcessor\MultiProcessor;
 use Jspeedz\MultiProcessor\Processor\ProcessorAbstract;
@@ -42,7 +43,7 @@ $manager->stopOnParentFatal($parentCheck);
 $manager->setChunkSize($chunkSize);
 $manager->setMaximumConcurrentChildren($concurrency);
 $once = $always = 0;
-$manager->addCloseResourceCallback(function() use (&$once): void { $once++; }, 'once');
+$manager->addCloseResourceCallback(function() use (&$once): void { $once++; }, ResourceCloseCallbackTriggerEnum::ONCE);
 $manager->addCloseResourceCallback(function() use (&$always): void { $always++; });
 $manager->run();
 echo json_encode(['pid' => posix_getpid(), 'once' => $once, 'always' => $always, 'processed' => $processor->processed], JSON_THROW_ON_ERROR);

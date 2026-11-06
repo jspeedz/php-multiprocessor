@@ -5,10 +5,7 @@ use Closure;
 use Countable;
 
 abstract class IteratorAbstract implements IteratorInterface, Countable {
-    /**
-     * @var null|Closure $iterationCallback
-     */
-    protected $iterationCallback;
+    protected ?Closure $iterationCallback = null;
 
     /**
      * This iterator does not wrap another iterator.

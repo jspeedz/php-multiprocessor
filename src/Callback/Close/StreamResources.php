@@ -29,7 +29,7 @@ class StreamResources {
                             'php://filter',
                             'php://memory',
                             'php://temp',
-                        ])) {
+                        ], true)) {
                             switch($meta['wrapper_type']) {
                                 case 'plainfile':
                                 case 'http':

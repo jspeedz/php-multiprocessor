@@ -1,6 +1,7 @@
 parameters:
     phpVersion: 80400
-    level: 5
+    level: 9
     paths:
         - src
     tmpDir: .phpstan.cache
+    treatPhpDocTypesAsCertain: false

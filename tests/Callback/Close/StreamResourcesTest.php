@@ -1,0 +1,231 @@
+<?php
+namespace Jspeedz\MultiProcessor\Tests\Callback\Close;
+
+use Closure;
+use Jspeedz\MultiProcessor\Callback\Close\StreamResources;
+use Jspeedz\MultiProcessor\Exception\UnsupportedException;
+use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\TestCase;
+use PHPUnit\Runner\CodeCoverage;
+use SebastianBergmann\CodeCoverage\Data\RawCodeCoverageData;
+use SebastianBergmann\CodeCoverage\Driver\Granularity;
+
+#[CoversClass(StreamResources::class)]
+final class StreamResourcesTest extends TestCase {
+    public function testGetCallbackReturnsAClosure(): void {
+        self::assertInstanceOf(Closure::class, (new StreamResources())->getCallback());
+    }
+
+    public function testCallbackClosesFiles(): void {
+        self::assertFalse($this->runIsolated(<<<'PHP'
+            $file = tmpfile();
+            (new StreamResources())->getCallback()();
+            return is_resource($file);
+            PHP));
+    }
+
+    public function testCallbackRejectsDirectoriesWithoutAUri(): void {
+        $result = $this->runIsolated(<<<'PHP'
+            $directory = opendir(sys_get_temp_dir());
+            try {
+                (new StreamResources())->getCallback()();
+                return null;
+            }
+            catch (\Jspeedz\MultiProcessor\Exception\UnsupportedException $exception) {
+                return [get_class($exception), $exception->getMessage(), is_resource($directory)];
+            }
+            PHP);
+
+        self::assertIsArray($result);
+        self::assertSame(UnsupportedException::class, $result[0]);
+        self::assertStringContainsString('"stream_type":"dir"', $result[1]);
+        self::assertTrue($result[2]);
+    }
+
+    public function testCallbackClosesProcessPipes(): void {
+        self::assertFalse($this->runIsolated(<<<'PHP'
+            $pipe = popen(escapeshellarg(PHP_BINARY) . ' -r ' . escapeshellarg('exit(0);'), 'r');
+            (new StreamResources())->getCallback()();
+            return is_resource($pipe);
+            PHP));
+    }
+
+    public function testCallbackIgnoresStreamContextsAndCanRunRepeatedly(): void {
+        self::assertTrue($this->runIsolated(<<<'PHP'
+            $context = stream_context_create();
+            $callback = (new StreamResources())->getCallback();
+            $callback();
+            $callback();
+            return is_resource($context);
+            PHP));
+    }
+
+    public static function streamMetadata(): iterable {
+        yield 'directory with a URI' => ['dir', 'plainfile', false, null];
+        yield 'HTTP stream' => ['STDIO', 'http', false, null];
+        yield 'HTTPS stream' => ['tcp_socket/ssl', 'http', false, null];
+        yield 'unhandled wrapper' => ['STDIO', 'custom', true, null];
+        yield 'unsupported stream type' => ['custom', 'plainfile', true, 'Unknown stream type (custom)'];
+    }
+
+    #[DataProvider('streamMetadata')]
+    public function testCallbackHandlesStreamMetadata(string $type, string $wrapper, bool $remainsOpen, ?string $error): void {
+        $metadata = ['uri' => 'test://resource', 'stream_type' => $type, 'wrapper_type' => $wrapper];
+        $body = '$GLOBALS["metadata"] = ' . var_export($metadata, true) . ';'
+            . '$resource = ' . ($type === 'dir' ? 'opendir(sys_get_temp_dir())' : 'tmpfile()') . ';'
+            . <<<'PHP'
+            if($resource === false) {
+                throw new \RuntimeException('Could not open the test resource.');
+            }
+            try {
+                (new StreamResources())->getCallback()();
+                $error = null;
+            }
+            catch (\Jspeedz\MultiProcessor\Exception\UnsupportedException $exception) {
+                $error = $exception->getMessage();
+            }
+            $remainsOpen = is_resource($resource);
+            if($remainsOpen) {
+                if($GLOBALS['metadata']['stream_type'] === 'dir') {
+                    closedir($resource);
+                }
+                else {
+                    fclose($resource);
+                }
+            }
+            return [$remainsOpen, $error];
+            PHP;
+
+        self::assertSame([$remainsOpen, $error], $this->runIsolated($body, <<<'PHP'
+            function stream_get_meta_data($resource): array {
+                return $GLOBALS['metadata'];
+            }
+            PHP));
+    }
+
+    public function testCallbackIgnoresAlreadyClosedResources(): void {
+        self::assertTrue($this->runIsolated(<<<'PHP'
+            $GLOBALS['closedResource'] = tmpfile();
+            fclose($GLOBALS['closedResource']);
+            (new StreamResources())->getCallback()();
+            return true;
+            PHP, <<<'PHP'
+            function get_resources(): array {
+                return [$GLOBALS['closedResource']];
+            }
+            PHP));
+    }
+
+    public function testCallbackRejectsUnsupportedResourceTypes(): void {
+        self::assertSame('Unknown resource type (process)', $this->runIsolated(<<<'PHP'
+            $process = proc_open(
+                [PHP_BINARY, '-r', 'exit(0);'],
+                [0 => ['file', '/dev/null', 'r'], 1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']],
+                $pipes,
+            );
+            if(!is_resource($process)) {
+                throw new \RuntimeException('Could not open the test process.');
+            }
+            try {
+                (new StreamResources())->getCallback()();
+                return null;
+            }
+            catch (\Jspeedz\MultiProcessor\Exception\UnsupportedException $exception) {
+                return $exception->getMessage();
+            }
+            finally {
+                proc_close($process);
+            }
+            PHP));
+    }
+
+    public static function unsupportedStreams(): iterable {
+        yield 'memory' => ['php://memory'];
+        yield 'temporary' => ['php://temp'];
+    }
+
+    #[DataProvider('unsupportedStreams')]
+    public function testCallbackRejectsExcludedStreamUris(string $uri): void {
+        $result = $this->runIsolated('$stream = fopen(' . var_export($uri, true) . ", 'r+');" . <<<'PHP'
+            try {
+                (new StreamResources())->getCallback()();
+                return null;
+            }
+            catch (\Jspeedz\MultiProcessor\Exception\UnsupportedException $exception) {
+                return [get_class($exception), $exception->getMessage(), is_resource($stream)];
+            }
+            PHP);
+
+        self::assertIsArray($result);
+        self::assertSame(UnsupportedException::class, $result[0]);
+        self::assertStringStartsWith('Unknown stream type (', $result[1]);
+        self::assertStringContainsString(str_replace('/', '\\/', $uri), $result[1]);
+        self::assertTrue($result[2]);
+    }
+
+    /**
+     * Keep resource discovery and closing away from PHPUnit's own open streams.
+     */
+    private function runIsolated(string $body, string $functions = ''): mixed {
+        $resultFile = tempnam(sys_get_temp_dir(), 'close-streams-');
+        self::assertNotFalse($resultFile);
+        $autoload = dirname(__DIR__, 3) . '/vendor/autoload.php';
+        $code = 'namespace { require ' . var_export($autoload, true) . '; }'
+            . 'namespace Jspeedz\\MultiProcessor\\Callback\\Close {' . $functions . '}'
+            . 'namespace {'
+            . 'use Jspeedz\\MultiProcessor\\Callback\\Close\\StreamResources;';
+        $coverage = CodeCoverage::instance();
+        $coverageFile = null;
+        $granularity = Granularity::Line;
+        if($coverage->isActive()) {
+            $coverageFile = tempnam(sys_get_temp_dir(), 'close-streams-coverage-');
+            self::assertNotFalse($coverageFile);
+            if($coverage->collectsPathCoverage()) {
+                $granularity = Granularity::LineBranchAndPath;
+            }
+            else if($coverage->collectsBranchCoverage()) {
+                $granularity = Granularity::LineAndBranch;
+            }
+            $code .= 'require ' . var_export(dirname(__DIR__, 2) . '/fixtures/subprocess-coverage.php', true) . ';';
+        }
+        $code .= 'fclose(STDIN); fclose(STDOUT); fclose(STDERR);'
+            . 'try { $result = (function() {' . $body . '})();'
+            . 'file_put_contents(' . var_export($resultFile, true) . ', json_encode(["result" => $result], JSON_THROW_ON_ERROR));'
+            . '} catch (Throwable $exception) {'
+            . 'file_put_contents(' . var_export($resultFile, true) . ', json_encode(["error" => (string) $exception], JSON_THROW_ON_ERROR)); exit(1); }}';
+
+        try {
+            $process = proc_open(
+                [PHP_BINARY, '-r', $code, $coverageFile ?? '', $granularity->name,
+                    dirname(__DIR__, 3) . '/src/Callback/Close/StreamResources.php'],
+                [0 => ['file', '/dev/null', 'r'], 1 => ['pipe', 'w'], 2 => ['redirect', 1]],
+                $pipes,
+            );
+            self::assertIsResource($process);
+            $output = stream_get_contents($pipes[1]);
+            fclose($pipes[1]);
+            $status = proc_close($process);
+            $json = file_get_contents($resultFile);
+            self::assertNotFalse($json);
+            self::assertNotSame('', $json, $output);
+            $report = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
+            self::assertSame(0, $status, $report['error'] ?? $output);
+            if($coverageFile !== null) {
+                $serialized = file_get_contents($coverageFile);
+                self::assertNotFalse($serialized);
+                self::assertNotSame('', $serialized, $output);
+                $data = unserialize($serialized, ['allowed_classes' => [RawCodeCoverageData::class]]);
+                self::assertInstanceOf(RawCodeCoverageData::class, $data);
+                $coverage->codeCoverage()->append($data);
+            }
+            return $report['result'];
+        }
+        finally {
+            unlink($resultFile);
+            if($coverageFile !== null) {
+                unlink($coverageFile);
+            }
+        }
+    }
+}

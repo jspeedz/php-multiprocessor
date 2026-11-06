@@ -1,10 +1,12 @@
 <?php
-namespace Jspeedz\MultiProcessor\Tests;
+namespace Jspeedz\MultiProcessor\Tests\Iterator;
 
 use Jspeedz\MultiProcessor\Iterator\ArrayIterator;
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
+#[CoversClass(ArrayIterator::class)]
 final class ArrayIteratorTest extends TestCase {
     public static function chunks(): iterable {
         yield 'empty' => [[], 2, true, []];

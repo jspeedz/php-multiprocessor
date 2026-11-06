@@ -4,6 +4,8 @@ require __DIR__ . '/../vendor/autoload.php';
 require __DIR__ . '/Processor/TestProcessor.php';
 
 use Jspeedz\MultiProcessor\Callback\Close\StreamResources;
+use Jspeedz\MultiProcessor\Enum\ResourceCloseCallbackTriggerEnum;
+use Jspeedz\MultiProcessor\Enum\StopOnFatalMethodEnum;
 use Jspeedz\MultiProcessor\Iterator\ArrayIterator;
 use Jspeedz\MultiProcessor\MultiProcessor;
 use Jspeedz\MultiProcessor\Utility\ProcessorCores;
@@ -27,11 +29,11 @@ $multiProcessor->setChunkSize(5);
 
 $multiProcessor->stopOnParentFatal(true); // Stops all children when the parent process is gone
 $multiProcessor->stopOnChildFatal(true); // Stops all children, and the parent when one of the forks crashes
-// $multiProcessor->stopOnFatalMethod('graceful');
-// $multiProcessor->stopOnFatalMethod('normal');
-$multiProcessor->stopOnFatalMethod('immediate');
+// $multiProcessor->stopOnFatalMethod(StopOnFatalMethodEnum::GRACEFUL);
+// $multiProcessor->stopOnFatalMethod(StopOnFatalMethodEnum::NORMAL);
+$multiProcessor->stopOnFatalMethod(StopOnFatalMethodEnum::IMMEDIATE);
 
-$multiProcessor->addCloseResourceCallback((new StreamResources)->getCallback(), 'once');
+$multiProcessor->addCloseResourceCallback((new StreamResources)->getCallback(), ResourceCloseCallbackTriggerEnum::ONCE);
 
 $multiProcessor->useProgressBar(true);
 

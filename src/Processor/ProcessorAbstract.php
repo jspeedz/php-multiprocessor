@@ -7,14 +7,11 @@ use Jspeedz\MultiProcessor\Iterator\IteratorInterface;
 
 abstract class ProcessorAbstract implements ProcessorInterface {
     /**
-     * @var iterable
+     * @var iterable<int, mixed>|null
      */
-    private $data;
+    private ?iterable $data = null;
 
-    /**
-     * @var Closure|null
-     */
-    protected $parentAliveCheck;
+    protected ?Closure $parentAliveCheck = null;
 
     /**
      * Whether to check if the parent is alive, and kill myself if not
@@ -31,7 +28,9 @@ abstract class ProcessorAbstract implements ProcessorInterface {
     }
 
     /**
-     * @param iterable $data
+     * @param iterable<int, mixed> $data
+     *
+     * @return void
      */
     public function setData(iterable $data): void {
         if(is_array($data)) {
@@ -53,9 +52,9 @@ abstract class ProcessorAbstract implements ProcessorInterface {
     public function initialize(): void {}
 
     /**
-     * @return iterable
+     * @return iterable<int, mixed>|null
      */
-    public function getData(): iterable {
+    public function getData(): ?iterable {
         return $this->data;
     }
 
