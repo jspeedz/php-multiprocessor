@@ -425,11 +425,16 @@ class MultiProcessor {
 
         if(pcntl_wifsignaled($status)) {
             // Child terminated by signal, which wasn't handled
+            $this->forgetChild($childPID);
             $signal = pcntl_wtermsig($status);
             trigger_error('Child terminated by unhandled signal (' . $signal . ', see PCNTL_* PHP contstants and linux fork() documentation)', E_USER_ERROR);
         }
         else if(pcntl_wifexited($status)) {
             // Clean exit, exit code returned by processor in exit() statement
+            // The child is reaped, so forget its PID before anything below signals the remaining children:
+            // the kernel may hand this PID to an unrelated process.
+            $this->forgetChild($childPID);
+
             $exitCode = pcntl_wexitstatus($status);
             if($exitCode !== 0) {
                 $this->childFailed = true;
@@ -450,17 +455,14 @@ class MultiProcessor {
                             echo PHP_EOL . 'A child fataled, shutting down ' . count($this->childPIDs) . ' processes (currently running children will be terminated)' . PHP_EOL;
 
                             $signal = $this->settings['stopOnFatalMethod'] === StopOnFatalMethodEnum::NORMAL ? SIGTERM : SIGKILL;
-                            foreach($this->childPIDs as $childPID) {
-                                posix_kill($childPID, $signal);
+                            foreach($this->childPIDs as $runningChildPID) {
+                                posix_kill($runningChildPID, $signal);
                             }
 
                             exit(1);
                         }
                     }
                 }
-            }
-            else {
-                unset($this->childPIDs[array_search($childPID, $this->childPIDs)]);
             }
         }
         else {
@@ -478,6 +480,16 @@ class MultiProcessor {
 
         if($this->gracefulShutdown && $this->currentRunningChildren === 0) {
             echo PHP_EOL . 'Gracefully shut down because of a child process fatal' . PHP_EOL;
+        }
+    }
+
+    /**
+     * Stop tracking a reaped child, so it is never signalled after its PID may have been reused.
+     */
+    private function forgetChild(int $childPID): void {
+        $key = array_search($childPID, $this->childPIDs, true);
+        if($key !== false) {
+            unset($this->childPIDs[$key]);
         }
     }
 

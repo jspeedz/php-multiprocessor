@@ -196,7 +196,8 @@ final class MultiProcessorTest extends TestCase {
 
         $this->invoke($manager, 'executeWaitForChildren', 123, $exitCode << 8);
 
-        self::assertSame($exitCode === 0 ? [1 => 456] : [123, 456], $this->get($manager, 'childPIDs'));
+        // Reaped children are always forgotten, so their (possibly reused) PIDs are never signalled
+        self::assertSame([1 => 456], $this->get($manager, 'childPIDs'));
         self::assertSame(1, $this->get($manager, 'currentRunningChildren'));
         self::assertSame(4, $this->get($manager, 'chunksProcessed'));
         self::assertSame($alreadyStopping, $this->get($manager, 'gracefulShutdown'));
@@ -213,8 +214,30 @@ final class MultiProcessorTest extends TestCase {
         self::assertTrue($this->get($manager, 'gracefulShutdown'));
         self::assertSame(0, $this->get($manager, 'currentRunningChildren'));
         self::assertSame(1, $this->get($manager, 'chunksProcessed'));
-        $this->expectOutputString(PHP_EOL . 'A child fataled, shutting down 1 processes (currently running children will complete)' . PHP_EOL
+        $this->expectOutputString(PHP_EOL . 'A child fataled, shutting down 0 processes (currently running children will complete)' . PHP_EOL
             . PHP_EOL . 'Gracefully shut down because of a child process fatal' . PHP_EOL);
+    }
+
+    public function testChildKilledBySignalIsForgotten(): void {
+        $manager = $this->manager();
+        $this->set($manager, 'childPIDs', [123, 456]);
+        $this->set($manager, 'currentRunningChildren', 2);
+        set_error_handler(static fn(): bool => true);
+        try {
+            $this->invoke($manager, 'executeWaitForChildren', 123, SIGKILL);
+        }
+        finally {
+            restore_error_handler();
+        }
+        self::assertSame([1 => 456], $this->get($manager, 'childPIDs'));
+    }
+
+    public function testUnknownChildPidDoesNotForgetTrackedChildren(): void {
+        $manager = $this->manager();
+        $this->set($manager, 'childPIDs', [123, 456]);
+        $this->set($manager, 'currentRunningChildren', 1);
+        $this->invoke($manager, 'executeWaitForChildren', 789, 0);
+        self::assertSame([123, 456], $this->get($manager, 'childPIDs'));
     }
 
     public function testStoppedChildIsNotTreatedAsExited(): void {
@@ -403,7 +426,7 @@ final class MultiProcessorTest extends TestCase {
             echo 'unreachable';
             PHP);
         self::assertSame(2, $status, $output);
-        self::assertStringContainsString('shutting down 2 processes', $output);
+        self::assertStringContainsString('shutting down 1 processes', $output);
         self::assertStringContainsString('wait:102;', $output);
         self::assertStringEndsWith('wait:-1;', $output);
         self::assertStringContainsString('Gracefully shut down because of a child process fatal', $output);
@@ -471,7 +494,9 @@ final class MultiProcessorTest extends TestCase {
             . '$manager->run(); echo "unreachable";');
         self::assertSame(1, $status, $output);
         self::assertStringContainsString('currently running children will be terminated', $output);
-        self::assertStringEndsWith("kill:101:$signal;kill:102:$signal;", $output);
+        // 101 already exited and was reaped: only the still running 102 is signalled
+        self::assertStringEndsWith("kill:102:$signal;", $output);
+        self::assertStringNotContainsString("kill:101:", $output);
         self::assertStringNotContainsString('unreachable', $output);
     }
 
