@@ -25,22 +25,55 @@ final class StreamResourcesTest extends TestCase {
             PHP));
     }
 
-    public function testCallbackRejectsDirectoriesWithoutAUri(): void {
-        $result = $this->runIsolated(<<<'PHP'
+    public function testCallbackClosesDirectories(): void {
+        self::assertFalse($this->runIsolated(<<<'PHP'
             $directory = opendir(sys_get_temp_dir());
-            try {
-                (new StreamResources())->getCallback()();
-                return null;
-            }
-            catch (\Jspeedz\MultiProcessor\Exception\UnsupportedException $exception) {
-                return [get_class($exception), $exception->getMessage(), is_resource($directory)];
-            }
-            PHP);
+            (new StreamResources())->getCallback()();
+            return is_resource($directory);
+            PHP));
+    }
 
-        self::assertIsArray($result);
-        self::assertSame(UnsupportedException::class, $result[0]);
-        self::assertStringContainsString('"stream_type":"dir"', $result[1]);
-        self::assertTrue($result[2]);
+    public function testCallbackClosesStreamsOfEveryWrapper(): void {
+        self::assertSame([
+            'php://fd' => false,
+            'compress.zlib' => false,
+            'php://filter' => false,
+            'socket' => false,
+            'php://temp with options' => true,
+        ], $this->runIsolated(<<<'PHP'
+            $file = tempnam(sys_get_temp_dir(), 'close-streams-wrapper-');
+            file_put_contents($file, 'data');
+            $sockets = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
+            $streams = [
+                'php://fd' => fopen('php://fd/1', 'w'),
+                'compress.zlib' => fopen('compress.zlib://' . $file, 'r'),
+                'php://filter' => fopen('php://filter/read=string.toupper/resource=' . $file, 'r'),
+                'socket' => $sockets[0],
+                'php://temp with options' => fopen('php://temp/maxmemory:1024', 'r+'),
+            ];
+            (new StreamResources())->getCallback()();
+            unlink($file);
+            return array_map(is_resource(...), $streams);
+            PHP));
+    }
+
+    public function testCallbackKeepsResourcesThatMustStayOpenSoLocksAreNotReleased(): void {
+        self::assertSame([true, false, false], $this->runIsolated(<<<'PHP'
+            $lockFile = tempnam(sys_get_temp_dir(), 'close-streams-lock-');
+            $lock = fopen($lockFile, 'c');
+            flock($lock, LOCK_EX);
+            $other = tmpfile();
+            (new StreamResources([$lock]))->getCallback()();
+
+            // A second, independent handle can only lock the file when the first lock was released
+            $probe = fopen($lockFile, 'c');
+            $lockWasReleased = flock($probe, LOCK_EX | LOCK_NB);
+            $result = [is_resource($lock), is_resource($other), $lockWasReleased];
+            fclose($probe);
+            fclose($lock);
+            unlink($lockFile);
+            return $result;
+            PHP));
     }
 
     public function testCallbackClosesProcessPipes(): void {
@@ -65,8 +98,8 @@ final class StreamResourcesTest extends TestCase {
         yield 'directory with a URI' => ['dir', 'plainfile', false, null];
         yield 'HTTP stream' => ['STDIO', 'http', false, null];
         yield 'HTTPS stream' => ['tcp_socket/ssl', 'http', false, null];
-        yield 'unhandled wrapper' => ['STDIO', 'custom', true, null];
-        yield 'unsupported stream type' => ['custom', 'plainfile', true, 'Unknown stream type (custom)'];
+        yield 'other wrapper' => ['STDIO', 'custom', false, null];
+        yield 'other stream type' => ['custom', 'plainfile', false, null];
     }
 
     #[DataProvider('streamMetadata')]

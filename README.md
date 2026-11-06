@@ -22,6 +22,17 @@ Using the same resources like file handles, MySQL or any other network connectio
     $multiProcessor->run();
     ```
     Every fork will re-connect to the database server and have their own connection this way.
+
+    `StreamResources` closes every open stream except PHP's standard streams and in-memory streams. Pass handles that must stay open, like a lock file held with `flock()` (closing it would release the lock):
+    ```php
+    $lock = fopen('/var/run/my-job.lock', 'c');
+    flock($lock, LOCK_EX | LOCK_NB) or exit('Already running');
+
+    $multiProcessor->addCloseResourceCallback(
+        (new \Jspeedz\MultiProcessor\Callback\Close\StreamResources(keepOpen: [$lock]))->getCallback(),
+        ResourceCloseCallbackTriggerEnum::ONCE,
+    );
+    ```
     
     If your goal is achieving parallel processing with isolated forks for multitenancy, initialize all resources in the processor to keep them isolated.
 2. Does not run on windows machines, as windows does not have PCNTL signaling.
