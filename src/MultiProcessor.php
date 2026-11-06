@@ -424,10 +424,13 @@ class MultiProcessor {
         // @todo return value, do logging with it?
 
         if(pcntl_wifsignaled($status)) {
-            // Child terminated by signal, which wasn't handled
+            // Child was killed by a signal it didn't handle (segfault, OOM killer, external SIGKILL, ...).
+            // Its chunk was not (fully) processed, so this is a child fatal.
             $this->forgetChild($childPID);
-            $signal = pcntl_wtermsig($status);
-            trigger_error('Child terminated by unhandled signal (' . $signal . ', see PCNTL_* PHP contstants and linux fork() documentation)', E_USER_ERROR);
+
+            echo PHP_EOL . 'A child was terminated by unhandled signal ' . pcntl_wtermsig($status) . ' (see the SIG* PHP constants)' . PHP_EOL;
+
+            $this->handleChildFatal();
         }
         else if(pcntl_wifexited($status)) {
             // Clean exit, exit code returned by processor in exit() statement
@@ -439,29 +442,12 @@ class MultiProcessor {
             if($exitCode !== 0) {
                 $this->childFailed = true;
 
-                // Child might have fataled.
+                // Child might have fataled: PHP exit code of 1 or 255
                 if(in_array($exitCode, [
                     1,
                     255,
                 ], true)) {
-                    // PHP exit code of 1 or 255
-                    if(!$this->gracefulShutdown && $this->settings['stopOnChildFatal']) {
-                        if($this->settings['stopOnFatalMethod'] === StopOnFatalMethodEnum::GRACEFUL) {
-                            echo PHP_EOL . 'A child fataled, shutting down ' . count($this->childPIDs) . ' processes (currently running children will complete)' . PHP_EOL;
-
-                            $this->gracefulShutdown = true;
-                        }
-                        else {
-                            echo PHP_EOL . 'A child fataled, shutting down ' . count($this->childPIDs) . ' processes (currently running children will be terminated)' . PHP_EOL;
-
-                            $signal = $this->settings['stopOnFatalMethod'] === StopOnFatalMethodEnum::NORMAL ? SIGTERM : SIGKILL;
-                            foreach($this->childPIDs as $runningChildPID) {
-                                posix_kill($runningChildPID, $signal);
-                            }
-
-                            exit(1);
-                        }
-                    }
+                    $this->handleChildFatal();
                 }
             }
         }
@@ -480,6 +466,33 @@ class MultiProcessor {
 
         if($this->gracefulShutdown && $this->currentRunningChildren === 0) {
             echo PHP_EOL . 'Gracefully shut down because of a child process fatal' . PHP_EOL;
+        }
+    }
+
+    /**
+     * A child crashed: mark the run as failed and stop the other children, depending on the settings.
+     */
+    private function handleChildFatal(): void {
+        $this->childFailed = true;
+
+        if($this->gracefulShutdown || !$this->settings['stopOnChildFatal']) {
+            return;
+        }
+
+        if($this->settings['stopOnFatalMethod'] === StopOnFatalMethodEnum::GRACEFUL) {
+            echo PHP_EOL . 'A child fataled, shutting down ' . count($this->childPIDs) . ' processes (currently running children will complete)' . PHP_EOL;
+
+            $this->gracefulShutdown = true;
+        }
+        else {
+            echo PHP_EOL . 'A child fataled, shutting down ' . count($this->childPIDs) . ' processes (currently running children will be terminated)' . PHP_EOL;
+
+            $signal = $this->settings['stopOnFatalMethod'] === StopOnFatalMethodEnum::NORMAL ? SIGTERM : SIGKILL;
+            foreach($this->childPIDs as $runningChildPID) {
+                posix_kill($runningChildPID, $signal);
+            }
+
+            exit(1);
         }
     }
 

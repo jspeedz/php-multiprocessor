@@ -218,18 +218,31 @@ final class MultiProcessorTest extends TestCase {
             . PHP_EOL . 'Gracefully shut down because of a child process fatal' . PHP_EOL);
     }
 
-    public function testChildKilledBySignalIsForgotten(): void {
+    #[TestWith([SIGKILL])]
+    #[TestWith([SIGSEGV])]
+    public function testChildKilledBySignalIsAFatalThatStartsGracefulShutdown(int $signal): void {
         $manager = $this->manager();
         $this->set($manager, 'childPIDs', [123, 456]);
         $this->set($manager, 'currentRunningChildren', 2);
-        set_error_handler(static fn(): bool => true);
-        try {
-            $this->invoke($manager, 'executeWaitForChildren', 123, SIGKILL);
-        }
-        finally {
-            restore_error_handler();
-        }
+        $this->invoke($manager, 'executeWaitForChildren', 123, $signal);
         self::assertSame([1 => 456], $this->get($manager, 'childPIDs'));
+        self::assertTrue($this->get($manager, 'childFailed'));
+        self::assertTrue($this->get($manager, 'gracefulShutdown'));
+        self::assertSame(1, $this->get($manager, 'currentRunningChildren'));
+        self::assertSame(1, $this->get($manager, 'chunksProcessed'));
+        $this->expectOutputString(PHP_EOL . 'A child was terminated by unhandled signal ' . $signal . ' (see the SIG* PHP constants)' . PHP_EOL
+            . PHP_EOL . 'A child fataled, shutting down 1 processes (currently running children will complete)' . PHP_EOL);
+    }
+
+    public function testChildKilledBySignalIsAFailureEvenWithoutStopOnChildFatal(): void {
+        $manager = $this->manager();
+        $manager->stopOnChildFatal(false);
+        $this->set($manager, 'childPIDs', [123]);
+        $this->set($manager, 'currentRunningChildren', 1);
+        $this->invoke($manager, 'executeWaitForChildren', 123, SIGKILL);
+        self::assertTrue($this->get($manager, 'childFailed'));
+        self::assertFalse($this->get($manager, 'gracefulShutdown'));
+        $this->expectOutputString(PHP_EOL . 'A child was terminated by unhandled signal ' . SIGKILL . ' (see the SIG* PHP constants)' . PHP_EOL);
     }
 
     public function testUnknownChildPidDoesNotForgetTrackedChildren(): void {
@@ -515,20 +528,37 @@ final class MultiProcessorTest extends TestCase {
         self::assertSame($child ? '' : 'kill:101:' . SIGKILL . ';1kill:102:' . SIGKILL . ';1', $output);
     }
 
-    public function testUnhandledChildSignalReportsFatalError(): void {
-        [$status, $output] = $this->subprocess(<<<'PHP'
-            set_error_handler(function(int $severity, string $message) {
-                if($severity === E_USER_ERROR) {
-                    echo "error:$severity:$message";
-                    exit(24);
-                }
-                return true;
-            });
-            (new \ReflectionMethod($manager, 'executeWaitForChildren'))->invoke($manager, 101, SIGKILL);
-            PHP);
-        self::assertSame(24, $status, $output);
-        self::assertSame('error:' . E_USER_ERROR . ':Child terminated by unhandled signal (' . SIGKILL
-            . ', see PCNTL_* PHP contstants and linux fork() documentation)', $output);
+    #[TestWith([true])]
+    #[TestWith([false])]
+    public function testChildKilledBySignalMakesParentExitWithFailure(bool $stopOnChildFatal): void {
+        // Even when an error handler would swallow errors, the parent must not exit 0
+        [$status, $output] = $this->subprocess('set_error_handler(static fn(): bool => true);'
+            . '$GLOBALS["forks"] = [101, 102];'
+            . '$GLOBALS["waits"] = [[101, ' . SIGKILL . '], [102, 0]];'
+            . '$manager->setChunkSize(2); $manager->setMaximumConcurrentChildren(1);'
+            . '$manager->stopOnChildFatal(' . var_export($stopOnChildFatal, true) . ');'
+            . '$manager->run(); echo "unreachable";');
+        self::assertSame(2, $status, $output);
+        self::assertStringContainsString('terminated by unhandled signal ' . SIGKILL, $output);
+        self::assertStringNotContainsString('unreachable', $output);
+        if($stopOnChildFatal) {
+            // Graceful shutdown: no more children are forked after the crash
+            self::assertStringNotContainsString('fork:102;', $output);
+        }
+        else {
+            self::assertStringContainsString('fork:102;', $output);
+        }
+    }
+
+    public function testChildKilledBySignalTerminatesSiblingsWithImmediateShutdown(): void {
+        [$status, $output] = $this->subprocess('$GLOBALS["forks"] = [101, 102];'
+            . '$GLOBALS["waits"] = [[101, ' . SIGSEGV . ']];'
+            . '$manager->setChunkSize(2); $manager->setMaximumConcurrentChildren(2);'
+            . '$manager->stopOnFatalMethod(\Jspeedz\MultiProcessor\Enum\StopOnFatalMethodEnum::IMMEDIATE);'
+            . '$manager->run(); echo "unreachable";');
+        self::assertSame(1, $status, $output);
+        self::assertStringEndsWith('kill:102:' . SIGKILL . ';', $output);
+        self::assertStringNotContainsString('kill:101:', $output);
     }
 
     public function testStopProcessingPreventsForking(): void {
