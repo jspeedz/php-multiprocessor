@@ -50,7 +50,7 @@ class StreamResources {
                                     break;
                             }
                         }
-                        else if(!isset($meta['uri']) && isset($meta['stream_type']) && $meta['stream_type'] === 'STDIO') {
+                        else if(!isset($meta['uri']) && $meta['stream_type'] === 'STDIO') {
                             // Assume this is a process handle, like popen(), fsockopen() etc.
                             pclose($resource);
                         }
