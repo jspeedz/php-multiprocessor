@@ -540,14 +540,22 @@ class MultiProcessor {
         $previousMask = [];
         pcntl_sigprocmask(SIG_BLOCK, self::TERMINATION_SIGNALS, $previousMask);
         try {
-            $result = pcntl_waitpid($childPID, $status, $flags);
+            $waitStatus = 0;
+            $result = pcntl_waitpid($childPID, $waitStatus, $flags);
+            $status = is_int($waitStatus) ? $waitStatus : 0;
             if($result > 0 && (pcntl_wifexited($status) || pcntl_wifsignaled($status))) {
                 $this->forgetChild($result);
             }
         }
         finally {
             // A termination signal that arrived meanwhile is handled right here
-            pcntl_sigprocmask(SIG_SETMASK, $previousMask);
+            if(is_array($previousMask)) {
+                pcntl_sigprocmask(SIG_SETMASK, $previousMask);
+            }
+            else {
+                // The previous mask is unknown: only undo our own blocking
+                pcntl_sigprocmask(SIG_UNBLOCK, self::TERMINATION_SIGNALS);
+            }
         }
 
         return $result;

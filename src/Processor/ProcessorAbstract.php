@@ -7,7 +7,7 @@ use Jspeedz\MultiProcessor\Iterator\IteratorInterface;
 
 abstract class ProcessorAbstract implements ProcessorInterface {
     /**
-     * @var iterable<int, mixed>|null
+     * @var iterable<mixed, mixed>|null
      */
     private ?iterable $data = null;
 
@@ -28,13 +28,14 @@ abstract class ProcessorAbstract implements ProcessorInterface {
     }
 
     /**
-     * @param iterable<int, mixed> $data
+     * @param iterable<mixed, mixed> $data
      *
      * @return void
      */
     public function setData(iterable $data): void {
         if(is_array($data)) {
-            $data = new ArrayIterator($data);
+            // Chunks may have any keys; our ArrayIterator walks consecutive integer keys
+            $data = new ArrayIterator(array_values($data), false);
         }
 
         // Only our own iterators support an iteration callback; other iterables are used as-is
@@ -52,7 +53,7 @@ abstract class ProcessorAbstract implements ProcessorInterface {
     public function initialize(): void {}
 
     /**
-     * @return iterable<int, mixed>|null
+     * @return iterable<mixed, mixed>|null
      */
     public function getData(): ?iterable {
         return $this->data;

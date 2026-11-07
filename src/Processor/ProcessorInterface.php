@@ -3,12 +3,12 @@ namespace Jspeedz\MultiProcessor\Processor;
 
 interface ProcessorInterface {
     /**
-     * @param iterable<int, mixed> $data
+     * @param iterable<mixed, mixed> $data
      */
     public function setData(iterable $data): void;
 
     /**
-     * @return iterable<int, mixed>|null
+     * @return iterable<mixed, mixed>|null
      */
     public function getData(): ?iterable;
 
