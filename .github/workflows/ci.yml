@@ -1,0 +1,177 @@
+name: CI checks
+on:
+    workflow_dispatch:
+        inputs:
+            auditVendorDependencies:
+                description: 'Run audit vendor dependencies'
+                required: false
+                default: true
+                type: boolean
+            linting:
+                description: 'Run linting job'
+                required: false
+                default: true
+                type: boolean
+            tests:
+                description: 'Run tests job'
+                required: false
+                default: true
+                type: boolean
+    pull_request:
+        branches:
+            - 'development'
+            - 'main'
+            - 'feature/**'
+            - 'release/**'
+            - 'hotfix/**'
+permissions:
+    # @see https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions#permissions
+    contents: read
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+    cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+    run:
+        # Fail on errors, unset variables and failures inside pipes; skip shell profile files
+        shell: bash --noprofile --norc -euo pipefail {0}
+
+env:
+    PHP_VERSION: '8.4'
+    PHP_EXTENSIONS: 'pcntl, posix, json'
+    # Unique per run, so every check job uses exactly the dependencies installed by the install job
+    VENDOR_CACHE_KEY: vendor-${{ github.run_id }}-${{ github.run_attempt }}
+
+jobs:
+    install:
+        name: Install dependencies
+        runs-on: ubuntu-latest
+        steps:
+            -   uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+            -   name: Setup PHP
+                uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+                with:
+                    php-version: ${{ env.PHP_VERSION }}
+                    extensions: ${{ env.PHP_EXTENSIONS }}
+                    coverage: none
+                    tools: composer:v2
+
+            -   name: Get Composer cache directory
+                id: composer-cache
+                run: |
+                    # Separate assignment, so a failing composer command fails the step
+                    dir="$(composer config cache-files-dir)"
+                    echo "dir=$dir" >> "$GITHUB_OUTPUT"
+
+            -   name: Cache Composer downloads
+                uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+                with:
+                    path: ${{ steps.composer-cache.outputs.dir }}
+                    key: composer-${{ runner.os }}-${{ hashFiles('composer.json') }}
+                    restore-keys: composer-${{ runner.os }}-
+
+            -   name: Install dependencies
+                run: composer install --no-interaction --no-progress --prefer-dist
+
+            -   name: Save installed dependencies
+                uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+                with:
+                    path: |
+                        vendor
+                        composer.lock
+                    key: ${{ env.VENDOR_CACHE_KEY }}
+
+    composer:
+        name: Composer validate & audit
+        needs: install
+        runs-on: ubuntu-latest
+        steps:
+            -   uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+            -   name: Setup PHP
+                uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+                with:
+                    php-version: ${{ env.PHP_VERSION }}
+                    extensions: ${{ env.PHP_EXTENSIONS }}
+                    coverage: none
+                    tools: composer:v2
+
+            -   name: Restore installed dependencies
+                uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+                with:
+                    path: |
+                        vendor
+                        composer.lock
+                    key: ${{ env.VENDOR_CACHE_KEY }}
+                    fail-on-cache-miss: true
+
+            -   parallel:
+                    -   name: Validate composer.json
+                        run: composer validate --strict --no-check-lock
+
+                    -   name: Audit dependencies
+                        if: ${{ github.event_name != 'workflow_dispatch' || inputs.auditVendorDependencies }}
+                        run: composer audit --no-interaction --locked
+
+    phpunit:
+        name: PHPUnit
+        needs: install
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.tests }}
+        runs-on: ubuntu-latest
+        steps:
+            -   uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+            -   name: Setup PHP
+                uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+                with:
+                    php-version: ${{ env.PHP_VERSION }}
+                    extensions: ${{ env.PHP_EXTENSIONS }}
+                    coverage: pcov
+
+            -   name: Restore installed dependencies
+                uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+                with:
+                    path: |
+                        vendor
+                        composer.lock
+                    key: ${{ env.VENDOR_CACHE_KEY }}
+                    fail-on-cache-miss: true
+
+            -   name: Run PHPUnit with coverage
+                run: >-
+                    vendor/bin/phpunit
+                    --coverage-clover .phpunit.results/coverage.xml
+                    --coverage-text
+                    --only-summary-for-coverage-text
+
+            -   name: Write coverage to run summary
+                run: php .github/scripts/coverage-markdown.php .phpunit.results/coverage.xml "$GITHUB_WORKSPACE" >> "$GITHUB_STEP_SUMMARY"
+
+    phpstan:
+        name: PHPStan
+        needs: install
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.linting }}
+        runs-on: ubuntu-latest
+        steps:
+            -   uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+            -   name: Setup PHP
+                uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+                with:
+                    php-version: ${{ env.PHP_VERSION }}
+                    extensions: ${{ env.PHP_EXTENSIONS }}
+                    coverage: none
+
+            -   name: Restore installed dependencies
+                uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+                with:
+                    path: |
+                        vendor
+                        composer.lock
+                    key: ${{ env.VENDOR_CACHE_KEY }}
+                    fail-on-cache-miss: true
+
+            -   name: Run PHPStan
+                run: vendor/bin/phpstan analyse --configuration=phpstan.neon --memory-limit=256M --no-progress --error-format=github
