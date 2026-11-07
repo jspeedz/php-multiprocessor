@@ -1,0 +1,8 @@
+parameters:
+    phpVersion: 80400
+    level: 9
+    paths:
+        - src
+    tmpDir: .phpstan.cache
+    treatPhpDocTypesAsCertain: false
+    editorUrlTitle: '%%relFile%%:%%line%%'

@@ -1,7 +1,5 @@
+includes:
+	- phpstan.dist.neon
+
 parameters:
-    phpVersion: 80400
-    level: 9
-    paths:
-        - src
-    tmpDir: .phpstan.cache
-    treatPhpDocTypesAsCertain: false
+	editorUrl: 'phpstorm://open?file=%%file%%&line=%%line%%'
