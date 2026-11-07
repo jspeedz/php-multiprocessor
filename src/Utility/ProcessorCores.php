@@ -35,7 +35,7 @@ class ProcessorCores {
             }
         }
         else {
-            $process = @popen('sysctl -n hw.ncpu', 'rb');
+            $process = @popen('sysctl -n hw.ncpu 2>/dev/null', 'rb');
             if(false !== $process) {
                 $output = stream_get_contents($process);
                 if($output !== false) {

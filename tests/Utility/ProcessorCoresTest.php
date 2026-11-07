@@ -91,7 +91,7 @@ final class ProcessorCoresTest extends TestCase {
         yield 'one core' => ["1\n", 1];
         yield 'multiple digits' => ["16\n", 16];
         yield 'zero cores falls back to one' => ["0\n", 1];
-        yield 'unknown key falls back to one' => ["sysctl: unknown oid 'hw.ncpu'\n", 1];
+        yield 'non-numeric output falls back to one' => ["unknown\n", 1];
         yield 'empty output' => ['', 1];
     }
 
@@ -101,12 +101,12 @@ final class ProcessorCoresTest extends TestCase {
 
         self::assertSame($expected, ProcessorCores::getNumberOfCores());
         self::assertSame($expected, ProcessorCores::$numberOfCores);
-        $this->assertCommandWasClosed('sysctl -n hw.ncpu');
+        $this->assertCommandWasClosed('sysctl -n hw.ncpu 2>/dev/null');
     }
 
     public static function failedCommands(): iterable {
         yield 'Windows' => ['WINNT', 'wmic cpu get NumberOfCores'];
-        yield 'other platforms' => ['FreeBSD', 'sysctl -n hw.ncpu'];
+        yield 'other platforms' => ['FreeBSD', 'sysctl -n hw.ncpu 2>/dev/null'];
     }
 
     #[DataProvider('failedCommands')]

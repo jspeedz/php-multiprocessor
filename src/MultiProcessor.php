@@ -5,6 +5,7 @@ use Closure;
 use Jspeedz\MultiProcessor\Callback\Iterator\ParentIsAlive;
 use Jspeedz\MultiProcessor\Enum\ResourceCloseCallbackTriggerEnum;
 use Jspeedz\MultiProcessor\Enum\StopOnFatalMethodEnum;
+use Jspeedz\MultiProcessor\Exception\InvalidGracePeriodException;
 use Jspeedz\MultiProcessor\Exception\InvalidPriorityException;
 use Jspeedz\MultiProcessor\Exception\NonCleanExitException;
 use Jspeedz\MultiProcessor\Exception\ProcessException;
@@ -28,6 +29,7 @@ class MultiProcessor {
      *     stopOnParentFatal: bool,
      *     stopOnChildFatal: bool,
      *     stopOnFatalMethod: StopOnFatalMethodEnum,
+     *     terminateGracePeriod: float,
      *     useProgressBar: bool,
      * }
      */
@@ -38,6 +40,8 @@ class MultiProcessor {
         'stopOnParentFatal' => true,
         'stopOnChildFatal' => true,
         'stopOnFatalMethod' => StopOnFatalMethodEnum::GRACEFUL,
+        // Seconds children get to exit after SIGTERM on a `normal` fatal shutdown, before they are killed with SIGKILL
+        'terminateGracePeriod' => 10.0,
         'useProgressBar' => true,
     ];
 
@@ -90,6 +94,34 @@ class MultiProcessor {
     private bool $gracefulShutdown = false;
 
     private bool $childFailed = false;
+
+    /**
+     * Seconds to wait for SIGKILLed children to be reaped. A child stuck in an uninterruptible system call
+     * (like I/O on a dead NFS mount) only dies once that call returns, so the parent gives up waiting on it.
+     */
+    private float $killReapTimeout = 5.0;
+
+    /**
+     * Longest sleep between checks on the children while a process we didn't fork stays waitable.
+     * Any SIGCHLD cuts the sleep short, so this only bounds the delay when a child exit slips in just before it.
+     */
+    private int $foreignExitPollMicroseconds = 1_000_000;
+
+    /**
+     * Number of SIGCHLD signals received, to tell whether a child exited since the children were last checked.
+     *
+     * @var non-negative-int
+     */
+    private int $childSignals = 0;
+
+    /**
+     * Signals whose handler terminates (and so signals) all tracked children.
+     */
+    private const array TERMINATION_SIGNALS = [
+        SIGTERM,
+        SIGQUIT,
+        SIGINT,
+    ];
 
     /**
      * @var bool $stopProcessing If true, will kill the chunk loop
@@ -172,12 +204,28 @@ class MultiProcessor {
     /**
      * Enables stopping all processes when a child process fatals.
      *
-     * @param StopOnFatalMethodEnum $stopOnFatalMethod = `graceful` will let running children complete, `normal` will kill all children with SIGTERM, `immediate` will kill all children instantly SIGKILL
+     * @param StopOnFatalMethodEnum $stopOnFatalMethod = `graceful` will let running children complete, `normal` will kill all children with SIGTERM (and SIGKILL after the grace period, see setTerminateGracePeriod()), `immediate` will kill all children instantly SIGKILL
      */
     public function stopOnFatalMethod(
         StopOnFatalMethodEnum $stopOnFatalMethod = StopOnFatalMethodEnum::GRACEFUL,
     ): void {
         $this->settings['stopOnFatalMethod'] = $stopOnFatalMethod;
+    }
+
+    /**
+     * How long children get to shut down after SIGTERM, when the `normal` stop on fatal method stops them.
+     * Children still running after this period (blocked in a system call, ignoring SIGTERM, ...) are killed with SIGKILL.
+     * Defaults to 10 seconds. Has no effect on the `graceful` and `immediate` methods.
+     *
+     * @param float $seconds 0 or more, 0 sends SIGKILL to children that didn't exit on SIGTERM right away.
+     *
+     * @throws InvalidGracePeriodException
+     */
+    public function setTerminateGracePeriod(float $seconds): void {
+        if(!is_finite($seconds) || $seconds < 0) {
+            throw new InvalidGracePeriodException('Invalid terminate grace period (' . var_export($seconds, true) . '), must be 0 seconds or more');
+        }
+        $this->settings['terminateGracePeriod'] = $seconds;
     }
 
     /**
@@ -239,20 +287,16 @@ class MultiProcessor {
     public function signalHandler(int $signo, mixed $siginfo): void {
         if($this->parentPID === posix_getpid()) {
             // Parent
-            if(in_array($signo, [
-                SIGTERM, // Default kill command
-                SIGQUIT, // interrupt signal (CTRL+\)
-                SIGINT, // interrupt signal (CTRL+C)
-            ], true)) {
+            // SIGTERM: default kill command, SIGQUIT: CTRL+\, SIGINT: CTRL+C
+            if(in_array($signo, self::TERMINATION_SIGNALS, true)) {
                 $this->stopProcessing = true;
-                foreach($this->childPIDs as $childPID) {
-                    echo posix_kill($childPID, SIGKILL);
-                }
+                $this->terminateChildren(SIGKILL);
 
                 exit(1);
             }
             if($signo === SIGCHLD) {
-                // Child has terminated, nothing to do here
+                // Child has terminated: it is reaped by waitForChildren(), which only needs to know it happened
+                $this->childSignals++;
                 return;
             }
 
@@ -401,45 +445,116 @@ class MultiProcessor {
      * @param bool $finalChildren If this current wait is on the final children, or in between chunks
      *
      * @throws NonCleanExitException
+     * @throws ProcessException When tracked children can no longer be waited for (reaped elsewhere)
      */
     private function waitForChildren(bool $finalChildren): void {
-        if($finalChildren) {
-            // Wait until the final forks are done processing
-            while(($childPID = pcntl_waitpid(0, $status)) !== -1) {
-                $this->executeWaitForChildren($childPID, $status);
-            }
-        }
-        else {
-            // Wait until we can start the next fork: only one of our own children frees up a slot
-            while(($childPID = pcntl_waitpid(0, $status)) !== -1) {
-                if($this->executeWaitForChildren($childPID, $status)) {
-                    break;
+        // Final: wait until all forks are done processing.
+        // Otherwise: wait until we can start the next fork, at least one of our children frees up a slot.
+        //
+        // Only our own children are reaped, by PID: reaping any child would also reap processes the caller
+        // started itself (like popen()), stealing their exit status from pclose()/proc_close().
+        while($this->childPIDs !== []) {
+            $childSignals = $this->childSignals;
+            $reaped = false;
+            foreach($this->childPIDs as $childPID) {
+                $result = $this->reapChild($childPID, $status, WNOHANG);
+                if($result === 0) {
+                    // Still running
+                    continue;
                 }
+                if($result === -1) {
+                    if(pcntl_get_last_error() === PCNTL_EINTR) {
+                        continue;
+                    }
+                    // Without this, the concurrency limit would be exceeded and a failed child would go unnoticed.
+                    throw new ProcessException('Lost track of child process ' . $childPID . ': it was reaped elsewhere');
+                }
+
+                $this->executeWaitForChildren($result, $status);
+                $reaped = true;
             }
+
+            if($reaped) {
+                if(!$finalChildren) {
+                    return;
+                }
+                continue;
+            }
+
+            $this->sleepUntilAChildExits($childSignals);
         }
     }
 
     /**
-     * @return bool False when the reaped process is not one of our forked children (like a popen() process),
-     *              in which case nothing is changed.
+     * Block until any child process has exited, without reaping it.
+     *
+     * @param non-negative-int $childSignals The SIGCHLD count from before the children were last checked
+     */
+    private function sleepUntilAChildExits(int $childSignals): void {
+        // WNOWAIT leaves an exited child waitable, for us to reap, or for pclose() when it isn't ours.
+        // First check without blocking whether a process is waitable already: when it isn't ours, it stays
+        // waitable until its owner reaps it, and waiting for it would return right away, over and over.
+        if(!pcntl_waitid(P_ALL, 0, $info, WEXITED | WNOWAIT | WNOHANG) || !is_array($info)) {
+            // Interrupted, or no children left at all: check our children again
+            return;
+        }
+        $pid = $info['pid'] ?? 0;
+        if($pid === 0) {
+            // Nothing has exited yet: block until any child exits
+            pcntl_waitid(P_ALL, 0, $info, WEXITED | WNOWAIT);
+            return;
+        }
+        if(in_array($pid, $this->childPIDs, true) || $this->childSignals !== $childSignals) {
+            // One of ours is waitable, or a child exited since we last checked
+            return;
+        }
+
+        // Only a process we didn't fork is waitable: sleep until the next SIGCHLD, which interrupts the sleep.
+        usleep($this->foreignExitPollMicroseconds);
+    }
+
+    /**
+     * Wait for a tracked child, and forget it once it is reaped.
+     *
+     * Termination signals are blocked meanwhile: their handler signals all tracked children,
+     * and must never see a PID that is reaped already, as the kernel may hand it to an unrelated process.
+     *
+     * @param-out int $status Set by pcntl_waitpid()
+     *
+     * @return int The waitpid() result: the child PID when reaped, 0 when still running (WNOHANG), -1 on errors
+     */
+    private function reapChild(int $childPID, ?int &$status, int $flags = 0): int {
+        $previousMask = [];
+        pcntl_sigprocmask(SIG_BLOCK, self::TERMINATION_SIGNALS, $previousMask);
+        try {
+            $result = pcntl_waitpid($childPID, $status, $flags);
+            if($result > 0 && (pcntl_wifexited($status) || pcntl_wifsignaled($status))) {
+                $this->forgetChild($result);
+            }
+        }
+        finally {
+            // A termination signal that arrived meanwhile is handled right here
+            pcntl_sigprocmask(SIG_SETMASK, $previousMask);
+        }
+
+        return $result;
+    }
+
+    /**
+     * Handle the exit status of a reaped child.
      *
      * @throws NonCleanExitException
      */
-    private function executeWaitForChildren(int $childPID, int $status): bool {
-        // @todo return value, do logging with it?
-
-        if(!in_array($childPID, $this->childPIDs, true)) {
-            // Not a child we forked, so it never took up a slot or processed a chunk.
-            return false;
-        }
+    private function executeWaitForChildren(int $childPID, int $status): void {
+        // @todo do logging with the exit status?
 
         if(!pcntl_wifsignaled($status) && !pcntl_wifexited($status)) {
             // Non-clean exit
             throw new NonCleanExitException('Non clean exit?');
         }
 
-        // The child is reaped, so forget its PID before anything below signals the remaining children:
-        // the kernel may hand this PID to an unrelated process.
+        // The child is reaped, so make sure its PID is forgotten before anything below signals the remaining
+        // children: the kernel may hand this PID to an unrelated process. reapChild() normally did this already.
         $this->forgetChild($childPID);
 
         if(pcntl_wifsignaled($status)) {
@@ -476,8 +591,6 @@ class MultiProcessor {
         if($this->gracefulShutdown && $this->currentRunningChildren === 0) {
             echo PHP_EOL . 'Gracefully shut down because of a child process fatal' . PHP_EOL;
         }
-
-        return true;
     }
 
     /**
@@ -498,18 +611,65 @@ class MultiProcessor {
         else {
             echo PHP_EOL . 'A child fataled, shutting down ' . count($this->childPIDs) . ' processes (currently running children will be terminated)' . PHP_EOL;
 
-            $signal = $this->settings['stopOnFatalMethod'] === StopOnFatalMethodEnum::NORMAL ? SIGTERM : SIGKILL;
-            foreach($this->childPIDs as $runningChildPID) {
-                posix_kill($runningChildPID, $signal);
-            }
-
-            // Reap the signalled children, so none is left running (or as a zombie) once the parent exits.
-            foreach($this->childPIDs as $runningChildPID) {
-                pcntl_waitpid($runningChildPID, $status);
-            }
+            $this->terminateChildren($this->settings['stopOnFatalMethod'] === StopOnFatalMethodEnum::NORMAL ? SIGTERM : SIGKILL);
 
             exit(1);
         }
+    }
+
+    /**
+     * Signal all tracked children and reap them, so none is left running (or as a zombie) once the parent exits.
+     * Children that survive a catchable signal for longer than the grace period (blocked in a system call,
+     * ignoring the signal, ...) are killed with SIGKILL, so the parent never waits on them indefinitely.
+     */
+    private function terminateChildren(int $signal): void {
+        $remaining = $this->childPIDs;
+        foreach($remaining as $childPID) {
+            posix_kill($childPID, $signal);
+        }
+
+        if($signal !== SIGKILL) {
+            $remaining = $this->reapChildrenWithin($remaining, $this->settings['terminateGracePeriod']);
+            foreach($remaining as $childPID) {
+                posix_kill($childPID, SIGKILL);
+            }
+        }
+
+        $remaining = $this->reapChildrenWithin($remaining, $this->killReapTimeout);
+        if($remaining !== []) {
+            echo PHP_EOL . 'Gave up waiting for killed child processes ' . implode(', ', $remaining)
+                . ' (stuck in an uninterruptible system call?)' . PHP_EOL;
+        }
+    }
+
+    /**
+     * Reap the given children as they exit, until all are reaped or the time is up.
+     *
+     * @param int[] $childPIDs
+     *
+     * @return int[] The children that are still running
+     */
+    private function reapChildrenWithin(array $childPIDs, float $seconds): array {
+        // hrtime() is monotonic: changes to the system clock don't shorten or lengthen the wait
+        $deadline = hrtime(true) + (int) ($seconds * 1_000_000_000);
+        while($childPIDs !== []) {
+            foreach($childPIDs as $key => $childPID) {
+                $result = $this->reapChild($childPID, $status, WNOHANG);
+                if($result === 0 || ($result === -1 && pcntl_get_last_error() === PCNTL_EINTR)) {
+                    // Still running, or interrupted: check again
+                    continue;
+                }
+                // Reaped, or not ours to wait for anymore (reaped elsewhere): never signal it again
+                $this->forgetChild($childPID);
+                unset($childPIDs[$key]);
+            }
+            if($childPIDs === [] || hrtime(true) >= $deadline) {
+                break;
+            }
+            usleep(10_000);
+        }
+
+        return $childPIDs;
     }
 
     /**

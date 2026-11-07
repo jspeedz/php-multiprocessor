@@ -5,6 +5,7 @@ use Jspeedz\MultiProcessor\Enum\ResourceCloseCallbackTriggerEnum;
 use Jspeedz\MultiProcessor\Enum\StopOnFatalMethodEnum;
 use Jspeedz\MultiProcessor\Exception\NonCleanExitException;
 use Jspeedz\MultiProcessor\Exception\UnsupportedException;
+use Jspeedz\MultiProcessor\Exception\InvalidGracePeriodException;
 use Jspeedz\MultiProcessor\Exception\InvalidPriorityException;
 use Jspeedz\MultiProcessor\Iterator\ArrayIterator;
 use Jspeedz\MultiProcessor\MultiProcessor;
@@ -42,6 +43,16 @@ final class MultiProcessorTest extends TestCase {
         $manager = new MultiProcessor(new ArrayIterator([]), $processor);
         $manager->useProgressBar(false);
         return $manager;
+    }
+
+    #[TestWith([-0.001, '-0.001'])]
+    #[TestWith([INF, 'INF'])]
+    #[TestWith([NAN, 'NAN'])]
+    public function testInvalidTerminateGracePeriodsAreRejected(float $seconds, string $shown): void {
+        $manager = $this->manager();
+        $this->expectException(InvalidGracePeriodException::class);
+        $this->expectExceptionMessage('Invalid terminate grace period (' . $shown . '), must be 0 seconds or more');
+        $manager->setTerminateGracePeriod($seconds);
     }
 
     #[TestWith([-21])]
@@ -96,6 +107,7 @@ final class MultiProcessorTest extends TestCase {
             'stopOnParentFatal' => true,
             'stopOnChildFatal' => true,
             'stopOnFatalMethod' => StopOnFatalMethodEnum::GRACEFUL,
+            'terminateGracePeriod' => 10.0,
             'useProgressBar' => true,
         ], $this->get($manager, 'settings'));
     }
@@ -111,6 +123,7 @@ final class MultiProcessorTest extends TestCase {
         $manager->stopOnParentFatal(false);
         $manager->stopOnChildFatal(false);
         $manager->stopOnFatalMethod(StopOnFatalMethodEnum::IMMEDIATE);
+        $manager->setTerminateGracePeriod(2.5);
         self::assertSame([
             'priority' => $priority,
             'concurrentChildren' => 3,
@@ -118,6 +131,7 @@ final class MultiProcessorTest extends TestCase {
             'stopOnParentFatal' => false,
             'stopOnChildFatal' => false,
             'stopOnFatalMethod' => StopOnFatalMethodEnum::IMMEDIATE,
+            'terminateGracePeriod' => 2.5,
             'useProgressBar' => false,
         ], $this->get($manager, 'settings'));
 
@@ -245,27 +259,23 @@ final class MultiProcessorTest extends TestCase {
         $this->expectOutputString(PHP_EOL . 'A child was terminated by unhandled signal ' . SIGKILL . ' (see the SIG* PHP constants)' . PHP_EOL);
     }
 
-    public function testUnknownChildPidIsIgnored(): void {
-        $manager = $this->manager();
-        $this->set($manager, 'childPIDs', [123, 456]);
-        $this->set($manager, 'currentRunningChildren', 2);
-        // A process we didn't fork (like a popen() process) never took up a slot or processed a chunk
-        self::assertFalse($this->invoke($manager, 'executeWaitForChildren', 789, 1 << 8));
-        self::assertSame([123, 456], $this->get($manager, 'childPIDs'));
-        self::assertSame(2, $this->get($manager, 'currentRunningChildren'));
-        self::assertSame(0, $this->get($manager, 'chunksProcessed'));
-        self::assertFalse($this->get($manager, 'childFailed'));
-        $this->expectOutputString('');
-    }
-
     public function testWaitForNextSlotSkipsProcessesThatAreNotOurChildren(): void {
-        // 999 is not one of our children: the parent keeps waiting until 101 frees up a slot before forking 102
+        // 999 is not one of our children: it is never reaped (the shim refuses waiting for any child),
+        // the parent keeps waiting until 101 frees up a slot before forking 102
         [$status, $output] = $this->subprocess('$GLOBALS["forks"] = [101, 102];'
             . '$GLOBALS["waits"] = [[999, 0], [101, 0], [102, 0]];'
             . '$manager->setChunkSize(2); $manager->setMaximumConcurrentChildren(1); $manager->run();'
             . 'echo (new \\ReflectionProperty($manager, "chunksProcessed"))->getValue($manager);');
         self::assertSame(0, $status, $output);
-        self::assertSame('fork:101;priority:19:101;wait:999;wait:101;fork:102;priority:19:102;wait:102;wait:-1;2', $output);
+        self::assertSame('fork:101;priority:19:101;sleep;wait:101;fork:102;priority:19:102;wait:102;2', $output);
+    }
+
+    public function testProcessesNotForkedByTheManagerAreLeftForTheirOwner(): void {
+        // A popen() process that exits while the manager waits for its children keeps its exit status for pclose()
+        [$status, $output] = $this->subprocess('$process = popen("exit 3", "r"); usleep(200_000);'
+            . '$manager->run(); echo "pclose:" . pclose($process);', false);
+        self::assertSame(0, $status, $output);
+        self::assertStringEndsWith('pclose:3', $output);
     }
 
     public function testStoppedChildIsNotTreatedAsExited(): void {
@@ -348,13 +358,70 @@ final class MultiProcessorTest extends TestCase {
                     echo "priority:$priority:$pid;";
                     return true;
                 }
-                function pcntl_waitpid(int $pid, ?int &$status): int {
-                    [$child, $status] = array_shift($GLOBALS['waits']) ?? [-1, 0];
+                // $GLOBALS['waits'] lists [pid, status, (errno)] in the order children exit. A child only exits
+                // once it is at the head of that list, unless it is waited for while blocking, or SIGKILLed.
+                function pcntl_waitpid(int $pid, ?int &$status, int $flags = 0): int {
+                    if($pid <= 0) {
+                        throw new \LogicException("pcntl_waitpid($pid) would reap processes that are not ours");
+                    }
+                    $key = null;
+                    $head = $GLOBALS['waits'][0] ?? null;
+                    if(isset($GLOBALS['onWait'])) {
+                        ($GLOBALS['onWait'])($pid);
+                    }
+                    if($head !== null && in_array($head[0], [$pid, -1], true)) {
+                        $key = 0;
+                    }
+                    else if(!($flags & WNOHANG) || isset($GLOBALS['killed'][$pid])) {
+                        foreach($GLOBALS['waits'] as $index => $wait) {
+                            if($wait[0] === $pid) {
+                                $key = $index;
+                                break;
+                            }
+                        }
+                    }
+                    if($key === null) {
+                        if($flags & WNOHANG) {
+                            $GLOBALS['lastError'] = 0;
+                            return 0;
+                        }
+                        $GLOBALS['lastError'] = PCNTL_ECHILD;
+                        echo "wait:-1;";
+                        return -1;
+                    }
+                    [$child, $status, $GLOBALS['lastError']] = $GLOBALS['waits'][$key] + [2 => 0];
+                    array_splice($GLOBALS['waits'], $key, 1);
                     echo "wait:$child;";
                     return $child;
                 }
+                function pcntl_get_last_error(): int { return $GLOBALS['lastError'] ?? 0; }
+                // Every sleep reports "a process we didn't fork exited", so the loop falls back to polling
+                // $GLOBALS['waitable'] is the PID reported as exited (0: none yet). A blocking wait reports block;
+                function pcntl_waitid(int $idtype, ?int $id, mixed &$info = [], int $flags = 0): bool {
+                    $GLOBALS['sleeps'] = ($GLOBALS['sleeps'] ?? 0) + 1;
+                    if($GLOBALS['sleeps'] > 20) {
+                        throw new \LogicException('Waiting forever for children that never exit');
+                    }
+                    echo ($flags & WNOHANG) ? 'sleep;' : 'block;';
+                    if(($GLOBALS['waits'][0][0] ?? null) === 999) {
+                        // 999 is a process we didn't fork (like popen()), its owner reaps it
+                        array_shift($GLOBALS['waits']);
+                    }
+                    $info = ['pid' => ($flags & WNOHANG) ? ($GLOBALS['waitable'] ?? 999) : 999];
+                    return true;
+                }
+                function usleep(int $microseconds): void {
+                    $GLOBALS['usleeps'][] = $microseconds;
+                    if(isset($GLOBALS['onSleep'])) {
+                        ($GLOBALS['onSleep'])();
+                    }
+                }
+                // SIGKILL can't be caught: the child becomes reapable right away, unless listed in $GLOBALS['stuck']
                 function posix_kill(int $pid, int $signal): bool {
                     echo "kill:$pid:$signal;";
+                    if($signal === SIGKILL && !in_array($pid, $GLOBALS['stuck'] ?? [], true)) {
+                        $GLOBALS['killed'][$pid] = true;
+                    }
                     return true;
                 }
             }
@@ -411,9 +478,9 @@ final class MultiProcessorTest extends TestCase {
         self::assertSame('fork:0;initialize:[10,20,30];parent-check:' . (int) $parentCheck . ';process;finish;exit;', $output);
     }
 
-    #[TestWith([1, 'wait:101;fork:102;priority:19:102;wait:102;fork:103;priority:19:103;wait:103;wait:-1;'])]
-    #[TestWith([2, 'fork:102;priority:19:102;wait:101;fork:103;priority:19:103;wait:102;wait:103;wait:-1;'])]
-    #[TestWith([8, 'fork:102;priority:19:102;fork:103;priority:19:103;wait:101;wait:102;wait:103;wait:-1;'])]
+    #[TestWith([1, 'wait:101;fork:102;priority:19:102;wait:102;fork:103;priority:19:103;wait:103;'])]
+    #[TestWith([2, 'fork:102;priority:19:102;wait:101;wait:102;fork:103;priority:19:103;wait:103;'])]
+    #[TestWith([8, 'fork:102;priority:19:102;fork:103;priority:19:103;wait:101;wait:102;wait:103;'])]
     public function testConcurrencyControlsWhenParentWaits(int $concurrency, string $expected): void {
         [$status, $output] = $this->subprocess('$GLOBALS["forks"] = [101, 102, 103];'
             . '$GLOBALS["waits"] = [[101, 0], [102, 0], [103, 0]];'
@@ -433,7 +500,7 @@ final class MultiProcessorTest extends TestCase {
             $manager->run();
             PHP);
         self::assertSame(0, $status, $output);
-        self::assertSame('once;always;fork:101;priority:5:101;wait:101;always;fork:102;priority:5:102;wait:102;wait:-1;', $output);
+        self::assertSame('once;always;fork:101;priority:5:101;wait:101;always;fork:102;priority:5:102;wait:102;', $output);
     }
 
     #[TestWith([1])]
@@ -444,7 +511,7 @@ final class MultiProcessorTest extends TestCase {
             . '$GLOBALS["waits"] = [[101, ' . ($exitCode << 8) . '], [102, 0]];'
             . '$manager->stopOnChildFatal(false); $manager->setChunkSize(2); $manager->run(); echo "returned;";');
         self::assertSame(2, $status, $output);
-        self::assertSame('fork:101;priority:19:101;wait:101;fork:102;priority:19:102;wait:102;wait:-1;', $output);
+        self::assertSame('fork:101;priority:19:101;wait:101;fork:102;priority:19:102;wait:102;', $output);
     }
 
     public function testGracefulShutdownDrainsPendingChildrenBeforeExiting(): void {
@@ -459,7 +526,6 @@ final class MultiProcessorTest extends TestCase {
         self::assertSame(2, $status, $output);
         self::assertStringContainsString('shutting down 1 processes', $output);
         self::assertStringContainsString('wait:102;', $output);
-        self::assertStringEndsWith('wait:-1;', $output);
         self::assertStringContainsString('Gracefully shut down because of a child process fatal', $output);
         self::assertStringNotContainsString('unreachable', $output);
     }
@@ -486,7 +552,7 @@ final class MultiProcessorTest extends TestCase {
             . var_export($finalChildren, true) . ');'
             . 'echo (new \ReflectionProperty($manager, "chunksProcessed"))->getValue($manager);');
         self::assertSame(0, $status, $output);
-        self::assertSame('wait:-1;0', $output);
+        self::assertSame('0', $output);
     }
 
     public function testForkFailureRaisesProcessException(): void {
@@ -526,10 +592,106 @@ final class MultiProcessorTest extends TestCase {
         self::assertSame(1, $status, $output);
         self::assertStringContainsString('currently running children will be terminated', $output);
         // 101 already exited and was reaped: only the still running 102 is signalled
-        // ... and reaped before the parent exits
+        // ... and reaped before the parent exits (SIGTERM gets a grace period, so it is polled)
         self::assertStringEndsWith("kill:102:$signal;wait:102;", $output);
         self::assertStringNotContainsString("kill:101:", $output);
         self::assertStringNotContainsString('unreachable', $output);
+    }
+
+    public function testNormalFatalShutdownKillsChildrenThatOutliveTheGracePeriod(): void {
+        // 102 is still running (0) when the grace period is over, so it is killed with SIGKILL and then reaped
+        [$status, $output] = $this->subprocess('$GLOBALS["forks"] = [101, 102];'
+            . '$GLOBALS["waits"] = [[101, 256], [999, 0], [102, ' . SIGKILL . ']];'
+            . '$manager->setTerminateGracePeriod(0.0);'
+            . '$manager->setChunkSize(2); $manager->setMaximumConcurrentChildren(2);'
+            . '$manager->stopOnFatalMethod(\\Jspeedz\\MultiProcessor\\Enum\\StopOnFatalMethodEnum::NORMAL);'
+            . '$manager->run(); echo "unreachable";');
+        self::assertSame(1, $status, $output);
+        self::assertStringEndsWith('kill:102:' . SIGTERM . ';kill:102:' . SIGKILL . ';wait:102;', $output);
+    }
+
+    public function testChildrenReapedDuringTheGracePeriodAreNeverSignalledAgain(): void {
+        // 102 exits on SIGTERM and is reaped in the grace period; then CTRL+C kills the children that are left:
+        // only 103, as the kernel may have handed PID 102 to an unrelated process already.
+        [$status, $output] = $this->subprocess('$GLOBALS["forks"] = [101, 102, 103];'
+            . '$GLOBALS["waits"] = [[101, 256], [102, 0], [999, 0], [103, ' . SIGKILL . ']];'
+            . '$GLOBALS["onSleep"] = function() use ($manager): void {'
+            . '  if(!in_array(102, (new \\ReflectionProperty($manager, "childPIDs"))->getValue($manager), true)) {'
+            . '    unset($GLOBALS["onSleep"]); echo "SIGINT;"; $manager->signalHandler(SIGINT, null);'
+            . '  }'
+            . '};'
+            . '$manager->setChunkSize(1); $manager->setMaximumConcurrentChildren(3);'
+            . '$manager->stopOnFatalMethod(\\Jspeedz\\MultiProcessor\\Enum\\StopOnFatalMethodEnum::NORMAL);'
+            . '$manager->run(); echo "unreachable";');
+        self::assertSame(1, $status, $output);
+        self::assertStringEndsWith('kill:102:' . SIGTERM . ';kill:103:' . SIGTERM . ';wait:102;SIGINT;kill:103:' . SIGKILL . ';wait:103;', $output);
+    }
+
+    public function testTerminationSignalsAreBlockedWhileReapingAChild(): void {
+        // A termination signal handled between reaping a child and forgetting it would signal its (reused) PID.
+        // Afterwards, the signal mask is restored as it was: the test runner may have blocked signals already.
+        [$status, $output] = $this->subprocess('$GLOBALS["forks"] = [101];'
+            . '$GLOBALS["waits"] = [[101, 0]];'
+            . '\\pcntl_sigprocmask(SIG_BLOCK, [SIGUSR2], $before);'
+            . '$GLOBALS["onWait"] = function(): void {'
+            . '  \\pcntl_sigprocmask(SIG_BLOCK, [SIGUSR2], $mask);'
+            . '  echo "blocked:" . (int) (array_diff([SIGTERM, SIGQUIT, SIGINT], $mask) === []) . ";";'
+            . '};'
+            . '$manager->run();'
+            . '\\pcntl_sigprocmask(SIG_BLOCK, [SIGUSR2], $after);'
+            . '$terminationSignals = static fn(array $mask): array => array_values(array_intersect([SIGTERM, SIGQUIT, SIGINT], $mask));'
+            . 'echo "after:" . (int) ($terminationSignals($before) === $terminationSignals($after));');
+        self::assertSame(0, $status, $output);
+        self::assertSame('fork:101;priority:19:101;blocked:1;wait:101;after:1', $output);
+    }
+
+    public function testParentGivesUpOnChildrenThatSurviveSigkill(): void {
+        // 102 is stuck in an uninterruptible system call (dead NFS mount): SIGKILL can't end it, don't wait forever
+        [$status, $output] = $this->subprocess('$GLOBALS["forks"] = [101, 102];'
+            . '$GLOBALS["waits"] = [[101, 256], [999, 0], [102, ' . SIGKILL . ']];'
+            . '$GLOBALS["stuck"] = [102];'
+            . '(new \\ReflectionProperty($manager, "killReapTimeout"))->setValue($manager, 0.0);'
+            . '$manager->setChunkSize(2); $manager->setMaximumConcurrentChildren(2);'
+            . '$manager->stopOnFatalMethod(\\Jspeedz\\MultiProcessor\\Enum\\StopOnFatalMethodEnum::IMMEDIATE);'
+            . '$manager->run(); echo "unreachable";');
+        self::assertSame(1, $status, $output);
+        self::assertStringEndsWith('kill:102:' . SIGKILL . ';' . PHP_EOL
+            . 'Gave up waiting for killed child processes 102 (stuck in an uninterruptible system call?)' . PHP_EOL, $output);
+    }
+
+    #[TestWith([0, false, 'sleep;block;', []])]
+    #[TestWith([101, false, 'sleep;', []])]
+    #[TestWith([999, false, 'sleep;', [1_000_000]])]
+    #[TestWith([999, true, 'sleep;', []])]
+    public function testSleepingUntilAChildExits(int $waitable, bool $childSignalled, string $expected, array $usleeps): void {
+        // Only when a process we didn't fork stays waitable, sleep until SIGCHLD instead of waiting (which wouldn't block)
+        [$status, $output] = $this->subprocess('$GLOBALS["waitable"] = ' . $waitable . ';'
+            . '(new \\ReflectionProperty($manager, "childPIDs"))->setValue($manager, [101]);'
+            . ($childSignalled ? '$manager->signalHandler(SIGCHLD, null);' : '')
+            . '(new \\ReflectionMethod($manager, "sleepUntilAChildExits"))->invoke($manager, 0);'
+            . 'echo json_encode($GLOBALS["usleeps"] ?? []);');
+        self::assertSame(0, $status, $output);
+        self::assertSame($expected . json_encode($usleeps), $output);
+    }
+
+    public function testInterruptedWaitIsRetried(): void {
+        [$status, $output] = $this->subprocess('$GLOBALS["forks"] = [101];'
+            . '$GLOBALS["waits"] = [[-1, 0, PCNTL_EINTR], [101, 0]];'
+            . '$manager->run(); echo "done";');
+        self::assertSame(0, $status, $output);
+        self::assertSame('fork:101;priority:19:101;wait:-1;sleep;wait:101;done', $output);
+    }
+
+    #[TestWith([1, 'fork:101;priority:19:101;wait:-1;Lost track of child process 101'])]
+    #[TestWith([2, 'fork:101;priority:19:101;fork:102;priority:19:102;wait:101;wait:-1;Lost track of child process 102'])]
+    public function testLosingTrackOfRunningChildrenThrows(int $concurrency, string $expected): void {
+        // waitpid() fails while children are still tracked (reaped elsewhere): don't fork past the limit or exit 0
+        [$status, $output] = $this->subprocess('$GLOBALS["forks"] = [101, 102, 103];'
+            . '$GLOBALS["waits"] = [' . ($concurrency === 2 ? '[101, 0], ' : '') . '[-1, 0, PCNTL_ECHILD]];'
+            . '$manager->setChunkSize(1); $manager->setMaximumConcurrentChildren(' . $concurrency . ');'
+            . 'try { $manager->run(); } catch(\\Jspeedz\\MultiProcessor\\Exception\\ProcessException $e) { echo $e->getMessage(); }');
+        self::assertSame(0, $status, $output);
+        self::assertSame($expected . ': it was reaped elsewhere', $output);
     }
 
     #[TestWith([SIGTERM, false])]
@@ -541,10 +703,12 @@ final class MultiProcessorTest extends TestCase {
     public function testTerminationSignalsExitParentOrChild(int $signal, bool $child): void {
         [$status, $output] = $this->subprocess(
             '(new \ReflectionProperty($manager, "childPIDs"))->setValue($manager, [101, 102]);'
+            . '$GLOBALS["waits"] = [[101, ' . SIGKILL . '], [102, ' . SIGKILL . ']];'
             . ($child ? '(new \ReflectionProperty($manager, "parentPID"))->setValue($manager, -1);' : '')
             . '$manager->signalHandler(' . $signal . ', null); echo "unreachable";');
         self::assertSame($child ? 0 : 1, $status, $output);
-        self::assertSame($child ? '' : 'kill:101:' . SIGKILL . ';1kill:102:' . SIGKILL . ';1', $output);
+        // The parent kills and reaps its children
+        self::assertSame($child ? '' : 'kill:101:' . SIGKILL . ';kill:102:' . SIGKILL . ';wait:101;wait:102;', $output);
     }
 
     #[TestWith([true])]

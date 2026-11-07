@@ -38,6 +38,21 @@ Using the same resources like file handles, MySQL or any other network connectio
 2. Does not run on windows machines, as windows does not have PCNTL signaling.
 3. No warranty. This package is kind of experimental. It is in professional use in a slightly different format though. 
 
+## Stopping when a child fatals
+By default, when a child fatals, the other children are stopped and the parent exits with a non-zero exit code. `stopOnFatalMethod()` picks how running children are stopped:
+
+| Method | Running children |
+|---|---|
+| `graceful` (default) | Complete their chunk, no new children are started |
+| `normal` | Get SIGTERM, and SIGKILL when they're still running after the grace period |
+| `immediate` | Get SIGKILL right away |
+
+The grace period of the `normal` method defaults to 10 seconds. Children that are blocked in a system call or ignore SIGTERM are killed once it is over, so the parent never waits on them indefinitely. Set it to the time your processor needs to shut down cleanly:
+```php
+$multiProcessor->stopOnFatalMethod(\Jspeedz\MultiProcessor\Enum\StopOnFatalMethodEnum::NORMAL);
+$multiProcessor->setTerminateGracePeriod(30.0); // seconds, 0 or more
+```
+
 ## Use case examples:
 - Processing multiple HTTP/REST API calls in parallel for API's that do not allow bulk actions
 - Splitting CPU intensive bulk hashing operations over multiple cores
@@ -45,7 +60,7 @@ Using the same resources like file handles, MySQL or any other network connectio
 - Achieving multitenancy architecture with only a single parent process and isolated forks to process tenants
 
 ## Prerequisites/Requirements
-- Linux or OSX
+- Linux or MacOS
 - PHP 8.4.27 or greater
 - ext-pcntl
 - ext-posix
@@ -53,11 +68,12 @@ Using the same resources like file handles, MySQL or any other network connectio
 
 ## Tests
 
-Install development dependencies and run the PHPUnit suite:
+Install development dependencies and run the test suite:
 
 ```sh
 composer install
 composer run test
+phpstan analyse --configuration=phpstan.neon --memory-limit=256M
 ```
 
 ## License
