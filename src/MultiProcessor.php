@@ -118,9 +118,9 @@ class MultiProcessor {
      * Signals whose handler terminates (and so signals) all tracked children.
      */
     private const array TERMINATION_SIGNALS = [
-        SIGTERM,
-        SIGQUIT,
-        SIGINT,
+        SIGTERM,  // Default kill command
+        SIGQUIT, // interrupt signal (CTRL+\)
+        SIGINT, // interrupt signal (CTRL+C)
     ];
 
     /**
@@ -132,6 +132,18 @@ class MultiProcessor {
         $this->data = $data;
         $this->processor = $processor;
 
+        // Signal handlers are only registered by run(), which sets this again. This keeps a direct signalHandler() call
+        // before run() from reading an uninitialized property.
+        $this->parentPID = posix_getpid();
+    }
+
+    /**
+     * Register the signal handlers for the process that is about to fork, see run().
+     *
+     * Keep this method above the code that forks and waits for children: declare(ticks) applies at compile time to the
+     * code that follows it in this file, regardless of the condition around it.
+     */
+    private function registerSignalHandlers(): void {
         $useTicks = !function_exists('pcntl_async_signals');
         if(!$useTicks) {
             pcntl_async_signals(true);
@@ -146,8 +158,6 @@ class MultiProcessor {
         foreach($this->signalHandlerEvent as $signal) {
             pcntl_signal($signal, $signalHandler);
         }
-
-        $this->parentPID = posix_getpid();
     }
 
     /**
@@ -309,13 +319,11 @@ class MultiProcessor {
                 // Nothing to do here
                 return;
             }
-            else if(in_array($signo, [
-                SIGTERM, // Default kill command
-                SIGQUIT, // interrupt signal (CTRL+\)
-                SIGINT, // interrupt signal (CTRL+C)
-            ], true)) {
+            else if(in_array($signo, self::TERMINATION_SIGNALS, true)) {
+                // Interrupted mid-chunk: exit like an uncaught signal would (128 + signal), so the parent sees the chunk failed.
+                // Not 1 or 255: those are child fatals to the parent, which would stop the remaining children.
                 // Let's kill myself
-                exit;
+                exit(128 + $signo);
             }
 
             throw new ProcessException('Caught undefined signal (' . $this->getStringFromSignal($signo) . ')');
@@ -331,6 +339,11 @@ class MultiProcessor {
      * @throws RandomException
      */
     public function run(): void {
+        // The process that runs is the one that forks, so it is the parent the children check for. It is not necessarily
+        // the process that constructed this object (that one may have forked since). Handlers are registered only now,
+        // so signalHandler() never decides between parent and child based on a stale PID.
+        $this->parentPID = posix_getpid();
+        $this->registerSignalHandlers();
         $this->data->generateChunks($this->settings['chunkSize']);
         $this->timeStarted = time();
 

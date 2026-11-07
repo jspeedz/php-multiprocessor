@@ -89,16 +89,19 @@ final class MultiProcessorTest extends TestCase {
         return (new \ReflectionMethod($manager, $method))->invoke($manager, ...$arguments);
     }
 
-    public function testConstructorRegistersSignalsAndDefaultSettings(): void {
+    public function testConstructorSetsDefaultSettingsWithoutRegisteringSignals(): void {
         pcntl_async_signals(false);
+        foreach([SIGTERM, SIGINT, SIGCHLD] as $signal) {
+            pcntl_signal($signal, SIG_DFL);
+        }
         $manager = new MultiProcessor(new ArrayIterator([]), new class extends ProcessorAbstract {
             public function process(): void {}
         });
 
         self::assertSame(posix_getpid(), $this->get($manager, 'parentPID'));
-        self::assertTrue(pcntl_async_signals());
+        self::assertFalse(pcntl_async_signals());
         foreach([SIGTERM, SIGINT, SIGCHLD] as $signal) {
-            self::assertSame([$manager, 'signalHandler'], pcntl_signal_get_handler($signal));
+            self::assertSame(SIG_DFL, pcntl_signal_get_handler($signal));
         }
         self::assertSame([
             'priority' => 19,
@@ -110,6 +113,23 @@ final class MultiProcessorTest extends TestCase {
             'terminateGracePeriod' => 10.0,
             'useProgressBar' => true,
         ], $this->get($manager, 'settings'));
+    }
+
+    public function testRunRegistersSignalsForTheRunningProcess(): void {
+        pcntl_async_signals(false);
+        $manager = new MultiProcessor(new ArrayIterator([]), new class extends ProcessorAbstract {
+            public function process(): void {}
+        });
+        $manager->useProgressBar(false);
+        $this->set($manager, 'parentPID', -1);
+
+        $manager->run();
+
+        self::assertSame(posix_getpid(), $this->get($manager, 'parentPID'));
+        self::assertTrue(pcntl_async_signals());
+        foreach([SIGTERM, SIGINT, SIGCHLD] as $signal) {
+            self::assertSame([$manager, 'signalHandler'], pcntl_signal_get_handler($signal));
+        }
     }
 
     #[TestWith([-20])]
@@ -347,6 +367,10 @@ final class MultiProcessorTest extends TestCase {
             $bootstrap .= 'require ' . var_export(__DIR__ . '/fixtures/subprocess-coverage.php', true) . ';';
         }
         $shims = $simulateProcesses ? <<<'PHP'
+            namespace Jspeedz\MultiProcessor\Callback\Iterator {
+                // A simulated fork runs the "child" in the parent process itself, which is therefore its own parent
+                function posix_getppid(): int { return \posix_getpid(); }
+            }
             namespace Jspeedz\MultiProcessor {
                 function pcntl_async_signals(?bool $enable = null): bool { return false; }
                 function pcntl_fork(): int {
@@ -512,6 +536,21 @@ final class MultiProcessorTest extends TestCase {
             . '$manager->stopOnChildFatal(false); $manager->setChunkSize(2); $manager->run(); echo "returned;";');
         self::assertSame(2, $status, $output);
         self::assertSame('fork:101;priority:19:101;wait:101;fork:102;priority:19:102;wait:102;', $output);
+    }
+
+    #[TestWith([SIGTERM])]
+    #[TestWith([SIGQUIT])]
+    #[TestWith([SIGINT])]
+    public function testChildInterruptedBySignalFailsTheRunWithoutStoppingOtherChildren(int $signal): void {
+        // A child that handled a termination signal exits with 128 + signal: its chunk failed, but it is no child fatal
+        [$status, $output] = $this->subprocess('$GLOBALS["forks"] = [101, 102];'
+            . '$GLOBALS["waits"] = [[101, ' . ((128 + $signal) << 8) . '], [102, 0]];'
+            . '$manager->setChunkSize(2); $manager->setMaximumConcurrentChildren(1); $manager->run(); echo "returned;";');
+        self::assertSame(2, $status, $output);
+        self::assertStringContainsString('wait:101;fork:102;', $output);
+        self::assertStringContainsString('wait:102;', $output);
+        self::assertStringNotContainsString('shutting down', $output);
+        self::assertStringNotContainsString('returned;', $output);
     }
 
     public function testGracefulShutdownDrainsPendingChildrenBeforeExiting(): void {
@@ -706,7 +745,7 @@ final class MultiProcessorTest extends TestCase {
             . '$GLOBALS["waits"] = [[101, ' . SIGKILL . '], [102, ' . SIGKILL . ']];'
             . ($child ? '(new \ReflectionProperty($manager, "parentPID"))->setValue($manager, -1);' : '')
             . '$manager->signalHandler(' . $signal . ', null); echo "unreachable";');
-        self::assertSame($child ? 0 : 1, $status, $output);
+        self::assertSame($child ? 128 + $signal : 1, $status, $output);
         // The parent kills and reaps its children
         self::assertSame($child ? '' : 'kill:101:' . SIGKILL . ';kill:102:' . SIGKILL . ';wait:101;wait:102;', $output);
     }
@@ -771,5 +810,70 @@ final class MultiProcessorTest extends TestCase {
         self::assertStringContainsString('initialize:[10,20,30];parent-check:1;process;finish;exit;', $output);
         self::assertStringContainsString('100.00%', $output);
         self::assertStringEndsWith(PHP_EOL . 'returned;', $output);
+    }
+
+    public function testRealForkChildInterruptedBySigtermFailsTheRunWithoutStoppingOtherChildren(): void {
+        // A real SIGTERM reaches the child's handler mid-chunk: the parent reaps 128 + SIGTERM, which fails the run
+        // (exit 2) but is no child fatal, so the next chunk is still processed
+        [$status, $output] = $this->subprocess(<<<'PHP'
+            $manager = new \Jspeedz\MultiProcessor\MultiProcessor(
+                new \Jspeedz\MultiProcessor\Iterator\ArrayIterator([1, 2]),
+                new class extends \Jspeedz\MultiProcessor\Processor\ProcessorAbstract {
+                    public function process(): void {
+                        foreach($this->getData() as $item) {
+                            if($item === 1) {
+                                register_shutdown_function(static fn() => print('child-shutdown;'));
+                                posix_kill(posix_getpid(), SIGTERM);
+                                for($tries = 0; $tries < 500; $tries++) {
+                                    // The handler runs asynchronously, but not necessarily before posix_kill() returns
+                                    usleep(10_000);
+                                }
+                                echo 'survived;';
+                            }
+                            echo "item:$item;";
+                        }
+                    }
+                },
+            );
+            $manager->useProgressBar(false);
+            $manager->setChunkSize(1);
+            $manager->setMaximumConcurrentChildren(1);
+            $manager->run();
+            echo 'unreachable';
+            PHP, false);
+        self::assertSame(2, $status, $output);
+        // Shutdown functions still run, as the handler exits normally instead of dying by the signal
+        self::assertMatchesRegularExpression('/child-shutdown;.*item:2;$/s', $output);
+        self::assertStringNotContainsString('survived;', $output);
+        self::assertStringNotContainsString('item:1;', $output);
+        self::assertStringNotContainsString('A child fataled', $output);
+    }
+
+    public function testRealForkRunFromAProcessForkedAfterConstructionKeepsItsChildrenAlive(): void {
+        // The children's parent-alive check must compare against the process that forked them, not the constructing one
+        [$status, $output] = $this->subprocess(<<<'PHP'
+            $manager = new \Jspeedz\MultiProcessor\MultiProcessor(
+                new \Jspeedz\MultiProcessor\Iterator\ArrayIterator([10, 20, 30]),
+                new class extends \Jspeedz\MultiProcessor\Processor\ProcessorAbstract {
+                    public function process(): void {
+                        foreach($this->getData() as $item) {
+                            echo "item:$item;";
+                        }
+                    }
+                },
+            );
+            $manager->useProgressBar(false);
+            $manager->setChunkSize(3);
+            $worker = pcntl_fork();
+            if($worker === 0) {
+                $manager->run();
+                exit(0);
+            }
+            pcntl_waitpid($worker, $workerStatus);
+            echo 'worker:' . pcntl_wexitstatus($workerStatus) . ';';
+            PHP, false);
+        self::assertSame(0, $status, $output);
+        self::assertStringContainsString('item:10;item:20;item:30;', $output);
+        self::assertStringEndsWith('worker:0;', $output);
     }
 }
