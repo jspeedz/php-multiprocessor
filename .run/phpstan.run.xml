@@ -1,6 +1,0 @@
-<component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="phpstan" type="PhpLocalRunConfigurationType" factoryName="PHP Console" path="$PROJECT_DIR$/vendor/phpstan/phpstan/phpstan" scriptParameters="analyse --configuration=$PROJECT_DIR$/phpstan.neon --memory-limit=256M --no-progress --error-format=table">
-    <CommandLine workingDirectory="$PROJECT_DIR$" />
-    <method v="2" />
-  </configuration>
-</component>
