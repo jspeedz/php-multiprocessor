@@ -6,3 +6,5 @@
 # Datasource local storage ignored files
 dataSources.local.xml
 /.phpstan.cache/
+# File with local phpstan settings, you can edit it with your own local dev env settings
+phpstan.neon
