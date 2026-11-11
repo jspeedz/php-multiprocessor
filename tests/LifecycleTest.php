@@ -73,6 +73,15 @@ final class LifecycleTest extends TestCase {
              * Exactly three child lifecycles must complete without deduplication.
              */
             'duplicates and falsey values' => [[0, false, '', null, 10, 10, 0], 3, 2],
+            // Twenty five-item chunks exercise repeated slot replacement across
+            // the full settings matrix without forking 2,000 children per case.
+            // CompletionLogTest retains one real 10,000-item hashing run.
+            '100 items, example chunk size' => [range(0, 99), 5, 8],
+            // Also cover a partial final chunk and a single child handling all work.
+            '100 items, partial final chunk' => [range(0, 99), 33, 3],
+            '100 items, serial partial final chunk' => [range(0, 99), 33, 1],
+            '100 items, more children than chunks' => [range(0, 99), 60, 8],
+            '100 items, oversized chunk' => [range(0, 99), 101, 8],
         ];
         foreach($workloads as $name => [$items, $size, $concurrency]) {
             foreach([false, true] as $parentCheck) {
@@ -117,7 +126,9 @@ final class LifecycleTest extends TestCase {
         self::assertNotFalse($log);
         try {
             $process = proc_open(
-                [PHP_BINARY, __DIR__ . '/fixtures/lifecycle.php', json_encode(
+                // This fixture records its own work; coverage/debug extensions
+                // are unnecessary in the thousands of forked child processes.
+                [PHP_BINARY, '-d', 'pcov.enabled=0', '-d', 'xdebug.mode=off', __DIR__ . '/fixtures/lifecycle.php', json_encode(
                     [$log, $items, $size, $concurrency, $parentCheck, $stopOnFatal, $progress, $method->value, $priority],
                     JSON_THROW_ON_ERROR,
                 )],

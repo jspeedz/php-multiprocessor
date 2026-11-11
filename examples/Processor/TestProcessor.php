@@ -3,6 +3,8 @@
 use Jspeedz\MultiProcessor\Processor\ProcessorAbstract;
 
 class TestProcessor extends ProcessorAbstract {
+    public function __construct(private CompletionLog $completionLog, private ?int $cost = null) {}
+
     /**
      * Use this if you need to do some custom task before processing a chunk
      */
@@ -19,7 +21,7 @@ class TestProcessor extends ProcessorAbstract {
 //            else {
                 $algorithm = PASSWORD_BCRYPT;
                 $options = [
-                    'cost' => rand(4, 10),
+                    'cost' => $this->cost ?? rand(4, 10),
                 ];
 //            }
 
@@ -30,8 +32,11 @@ class TestProcessor extends ProcessorAbstract {
             }
 
             if (!password_verify($randomMd5Hash, $hashedString)) {
-                // Will never not verify
+                throw new RuntimeException('Password verification failed.');
             }
+
+            // Record only after this item's work actually succeeds.
+            $this->completionLog->record($randomMd5Hash);
         }
     }
 
