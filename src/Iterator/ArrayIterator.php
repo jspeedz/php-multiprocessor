@@ -6,30 +6,25 @@ namespace Jspeedz\MultiProcessor\Iterator;
  */
 class ArrayIterator extends IteratorAbstract {
     /**
-     * @var int
+     * @var non-negative-int
      */
-    protected $chunkCount = 0;
+    protected int $chunkCount = 0;
 
     /**
-     * @var array
+     * @var array<int, mixed>
      */
-    private $data = [];
+    private array $data = [];
 
     /**
      * Keeps the initial key of the first element in the set data.
      * This adds support for arrays starting with an index > 0, like array_chunked arrays
-     *
-     * @var null|int
      */
-    private $initialPointer;
+    private ?int $initialPointer;
+
+    private ?int $pointer;
 
     /**
-     * @var null|int
-     */
-    private $pointer;
-
-    /**
-     * @param array $data
+     * @param array<int, mixed> $data
      * @param bool $reIndexArray = true Prevents errors when array element are unset, and the indexes are not continuous
      */
     public function __construct(array $data, bool $reIndexArray = true) {
@@ -44,7 +39,7 @@ class ArrayIterator extends IteratorAbstract {
     }
 
     /**
-     * @param integer $chunkSize
+     * @param positive-int $chunkSize
      */
     public function generateChunks(int $chunkSize): void {
         $this->data = array_chunk($this->data, $chunkSize, true);
@@ -52,15 +47,15 @@ class ArrayIterator extends IteratorAbstract {
     }
 
     /**
-     * @return boolean|mixed
+     * @return false|mixed
      */
     #[\ReturnTypeWillChange]
-    public function next() {
+    public function next(): mixed {
         $this->pointer += 1;
 
         $this->executeIterationCallback();
 
-        if(isset($this->data[$this->pointer])) {
+        if(array_key_exists($this->pointer, $this->data)) {
             return $this->data[$this->pointer];
         }
         else {
@@ -69,12 +64,16 @@ class ArrayIterator extends IteratorAbstract {
     }
 
     /**
-     * @return bool|mixed
+     * @return false|mixed
      */
     #[\ReturnTypeWillChange]
-    public function rewind() {
+    public function rewind(): mixed {
         $this->pointer = $this->initialPointer;
-        if(empty($this->data)) {
+        if(
+            empty($this->data) ||
+            $this->pointer === null ||
+            !array_key_exists($this->pointer, $this->data)
+        ) {
             return false;
         }
 
@@ -82,11 +81,11 @@ class ArrayIterator extends IteratorAbstract {
     }
 
     /**
-     * @return bool|array
+     * @return false|mixed
      */
     #[\ReturnTypeWillChange]
-    public function current() {
-        if(isset($this->data[$this->pointer])) {
+    public function current(): mixed {
+        if($this->pointer !== null && array_key_exists($this->pointer, $this->data)) {
             return $this->data[$this->pointer];
         }
         else {
@@ -95,25 +94,22 @@ class ArrayIterator extends IteratorAbstract {
     }
 
     /**
-     * @return integer
+     * @return int|null Null when there is no data to iterate
      */
-    public function key(): int {
+    public function key(): ?int {
         return $this->pointer;
     }
 
     /**
      * return the number of chunks.
      *
-     * @return integer
+     * @return non-negative-int
      */
     public function count(): int {
         return $this->chunkCount;
     }
 
-    /**
-     * @return boolean
-     */
     public function valid(): bool {
-        return isset($this->data[$this->pointer]);
+        return $this->pointer !== null && array_key_exists($this->pointer, $this->data);
     }
 }

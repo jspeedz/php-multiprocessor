@@ -2,17 +2,20 @@
 namespace Jspeedz\MultiProcessor\Iterator;
 
 use Closure;
+use OuterIterator;
 
-interface IteratorInterface extends \OuterIterator {
+/**
+ * @extends OuterIterator<mixed, mixed>
+ */
+interface IteratorInterface extends OuterIterator {
     /**
      * Generate the number of chunks requested.
      *
-     * @param integer $chunkSize
+     * @param positive-int $chunkSize
      */
     public function generateChunks(int $chunkSize): void;
 
-    #[\ReturnTypeWillChange]
-	public function getInnerIterator();
+    public function getInnerIterator(): ?\Iterator;
 
     /**
      * @param Closure $callback

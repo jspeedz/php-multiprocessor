@@ -3,9 +3,12 @@ namespace Jspeedz\MultiProcessor\Callback;
 
 use Closure;
 
+/**
+ * @template TParam
+ */
 interface CallbackInterface {
     /**
-     * @param array $params
+     * @param array<TParam> $params
      *
      * @return Closure
      */
