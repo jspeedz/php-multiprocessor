@@ -1,8 +1,9 @@
 <?php
-require __DIR__ . '/../vendor/autoload.php';
 
-require __DIR__ . '/CompletionLog.php';
-require __DIR__ . '/Processor/TestProcessor.php';
+require_once __DIR__ . '/../vendor/autoload.php';
+
+require_once __DIR__ . '/CompletionLog.php';
+require_once __DIR__ . '/Processor/TestProcessor.php';
 
 use Jspeedz\MultiProcessor\Callback\Close\StreamResources;
 use Jspeedz\MultiProcessor\Enum\ResourceCloseCallbackTriggerEnum;
@@ -21,14 +22,22 @@ $array = array_map(
     range(0, 9999)
 );
 
+$removeLogAfterVerification = true;
 $completionPath = tempnam(sys_get_temp_dir(), 'multiprocessor-completed-');
+
 if($completionPath === false) {
     throw new RuntimeException('Could not create the completion log.');
 }
 $parentPID = posix_getpid();
-register_shutdown_function(static function() use ($parentPID, $completionPath): void {
+
+echo sprintf(
+    'Writing tmp log to%s: %s' . PHP_EOL,
+    $removeLogAfterVerification ? ' (removing log after verification)' : '',
+    $completionPath,
+);
+register_shutdown_function(static function() use ($parentPID, $removeLogAfterVerification, $completionPath): void {
     // Children inherit shutdown handlers, but must not remove the shared log.
-    if(posix_getpid() === $parentPID) {
+    if($removeLogAfterVerification && posix_getpid() === $parentPID) {
         unlink($completionPath);
     }
 });
@@ -44,15 +53,22 @@ $cores = ProcessorCores::getNumberOfCores() * 2;
 echo sprintf('Using a maximum of %s concurrent forked processes' . PHP_EOL, $cores);
 
 $multiProcessor->setMaximumConcurrentChildren($cores);
-$multiProcessor->setChunkSize(5);
+$multiProcessor->setChunkSize(250);
 
-$multiProcessor->stopOnParentFatal(true); // Stops all children when the parent process is gone
-$multiProcessor->stopOnChildFatal(true); // Stops all children, and the parent when one of the forks crashes
-// $multiProcessor->stopOnFatalMethod(StopOnFatalMethodEnum::GRACEFUL);
-// $multiProcessor->stopOnFatalMethod(StopOnFatalMethodEnum::NORMAL);
+// Stops all children when the parent process is gone
+$multiProcessor->stopOnParentFatal(true);
+
+// Stops all children, and the parent when one of the forks crashes
+$multiProcessor->stopOnChildFatal(true);
+
+//$multiProcessor->stopOnFatalMethod(StopOnFatalMethodEnum::GRACEFUL);
+//$multiProcessor->stopOnFatalMethod(StopOnFatalMethodEnum::NORMAL);
 $multiProcessor->stopOnFatalMethod(StopOnFatalMethodEnum::IMMEDIATE);
 
-$multiProcessor->addCloseResourceCallback((new StreamResources)->getCallback(), ResourceCloseCallbackTriggerEnum::ONCE);
+$multiProcessor->addCloseResourceCallback(
+    (new StreamResources)->getCallback(),
+    ResourceCloseCallbackTriggerEnum::ONCE,
+);
 
 $multiProcessor->useProgressBar(true);
 

@@ -1,5 +1,4 @@
 <?php
-
 /**
  * Child memory is isolated after fork: record completed work on disk instead.
  * Open the file for each write so resource-close callbacks cannot close its handle.

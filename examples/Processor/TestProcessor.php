@@ -25,6 +25,10 @@ class TestProcessor extends ProcessorAbstract {
                 ];
 //            }
 
+//            if(str_starts_with($randomMd5Hash, '750')) {
+//                throw new \Exception('Crash test');
+//            }
+
             $hashedString = password_hash($randomMd5Hash, $algorithm, $options);
 
             if (password_needs_rehash($hashedString, $algorithm)) {

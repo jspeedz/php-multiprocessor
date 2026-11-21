@@ -35,8 +35,22 @@ Using the same resources like file handles, MySQL or any other network connectio
     ```
     
     If your goal is achieving parallel processing with isolated forks for multitenancy, initialize all resources in the processor to keep them isolated.
-2. Does not run on windows machines, as windows does not have PCNTL signaling.
-3. No warranty. This package is kind of experimental. It is in professional use in a slightly different format though. 
+2. When multiple processors have to write to the same file, use a write lock. Forks run at the same time, so without a lock their writes can interleave and corrupt the file. Take an exclusive lock with `flock()` around every write.
+   Open the file inside the processor, not before forking, so every fork has its own handle (see caveat 1).
+    ```php
+    $handle = fopen('/path/to/output.log', 'a');
+    if (flock($handle, LOCK_EX)) {
+        fwrite($handle, $line . PHP_EOL);
+        fflush($handle);
+        flock($handle, LOCK_UN);
+    }
+    fclose($handle);
+
+    # Or, for simple appends: 
+    file_put_contents('/path/to/output.log', $line . PHP_EOL, FILE_APPEND | LOCK_EX);
+    ```
+3. Does not run on Windows machines, as Windows does not have PCNTL signaling.
+4. No warranty. This package is kind of experimental. It is in professional use in a slightly different format though. 
 
 ## Stopping when a child fatals
 By default, when a child fatals, the other children are stopped and the parent exits with a non-zero exit code. `stopOnFatalMethod()` picks how running children are stopped:
