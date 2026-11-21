@@ -5,12 +5,14 @@ use Closure;
 use Countable;
 
 abstract class IteratorAbstract implements IteratorInterface, Countable {
-    /**
-     * @var null|Closure $iterationCallback
-     */
-    protected $iterationCallback;
+    protected ?Closure $iterationCallback = null;
 
-    public function getInnerIterator() {}
+    /**
+     * This iterator does not wrap another iterator.
+     */
+    public function getInnerIterator(): ?\Iterator {
+        return null;
+    }
 
     /**
      * @param Closure $callback

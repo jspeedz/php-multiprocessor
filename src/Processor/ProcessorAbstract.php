@@ -3,17 +3,15 @@ namespace Jspeedz\MultiProcessor\Processor;
 
 use Closure;
 use Jspeedz\MultiProcessor\Iterator\ArrayIterator;
+use Jspeedz\MultiProcessor\Iterator\IteratorInterface;
 
 abstract class ProcessorAbstract implements ProcessorInterface {
     /**
-     * @var iterable
+     * @var iterable<mixed, mixed>|null
      */
-    private $data;
+    private ?iterable $data = null;
 
-    /**
-     * @var Closure|null
-     */
-    protected $parentAliveCheck;
+    protected ?Closure $parentAliveCheck = null;
 
     /**
      * Whether to check if the parent is alive, and kill myself if not
@@ -30,14 +28,18 @@ abstract class ProcessorAbstract implements ProcessorInterface {
     }
 
     /**
-     * @param iterable $data
+     * @param iterable<mixed, mixed> $data
+     *
+     * @return void
      */
     public function setData(iterable $data): void {
         if(is_array($data)) {
-            $data = new ArrayIterator($data);
+            // Chunks may have any keys; our ArrayIterator walks consecutive integer keys
+            $data = new ArrayIterator(array_values($data), false);
         }
 
-        if($this->parentAliveCheck !== null) {
+        // Only our own iterators support an iteration callback; other iterables are used as-is
+        if($this->parentAliveCheck !== null && $data instanceof IteratorInterface) {
             // If callback returns false it'll stop iterating
             $data->setIterationCallback($this->parentAliveCheck);
         }
@@ -51,9 +53,9 @@ abstract class ProcessorAbstract implements ProcessorInterface {
     public function initialize(): void {}
 
     /**
-     * @return iterable
+     * @return iterable<mixed, mixed>|null
      */
-    public function getData(): iterable {
+    public function getData(): ?iterable {
         return $this->data;
     }
 

@@ -3,14 +3,14 @@ namespace Jspeedz\MultiProcessor\Processor;
 
 interface ProcessorInterface {
     /**
-     * @param iterable $data
+     * @param iterable<mixed, mixed> $data
      */
     public function setData(iterable $data): void;
 
     /**
-     * @return iterable
+     * @return iterable<mixed, mixed>|null
      */
-    public function getData(): iterable;
+    public function getData(): ?iterable;
 
     /**
      * Use this if you need to do some custom task before processing a chunk

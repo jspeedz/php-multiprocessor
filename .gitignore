@@ -1,5 +1,9 @@
 /.idea/
 /vendor/
 /composer.lock
+/.phpunit.results/
 # Datasource local storage ignored files
 dataSources.local.xml
+/var/cache/
+# File with local phpstan settings, you can edit it with your own local dev env settings
+phpstan.neon

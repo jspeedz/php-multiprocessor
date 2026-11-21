@@ -18,21 +18,27 @@
     "psr-4": {
       "Jspeedz\\MultiProcessor\\": "src/"
     },
-    "files": [
-    ],
-    "exclude-from-classmap": [
-      "/Tests/"
-    ]
+    "files": []
   },
   "autoload-dev": {
     "psr-4": {
-      "Jspeedz\\MultiProcessor\\Tests\\": "src/Tests"
+      "Jspeedz\\MultiProcessor\\Tests\\": "tests/"
     }
   },
   "require": {
-    "php": ">=7.1",
+    "php": ">=8.4.27",
     "ext-pcntl": "*",
     "ext-posix": "*",
     "ext-json": "*"
+  },
+  "require-dev": {
+    "phpunit/phpunit": "^13.4",
+    "phpstan/phpstan": "^2.3",
+    "doctrine/dbal": "^4.5",
+    "doctrine/orm": "^3.7"
+  },
+  "scripts": {
+    "test": "phpunit",
+    "phpstan": "phpstan analyse --configuration=phpstan.neon --memory-limit=256M"
   }
 }
