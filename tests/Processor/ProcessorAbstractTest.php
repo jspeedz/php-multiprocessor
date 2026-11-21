@@ -18,15 +18,15 @@ final class ProcessorAbstractTest extends TestCase {
         };
     }
 
-    public function testDataIsInitiallyNull(): void {
-        self::assertNull($this->processor()->getData());
+    public function testDataIsInitiallyEmpty(): void {
+        self::assertSame([], $this->processor()->getData());
     }
 
     public function testDefaultLifecycleHooksPreserveData(): void {
         $processor = $this->processor();
         $processor->initialize();
         $processor->finish();
-        self::assertNull($processor->getData());
+        self::assertSame([], $processor->getData());
 
         $data = new ArrayIterator([1, 2]);
         $processor->setData($data);
@@ -49,7 +49,7 @@ final class ProcessorAbstractTest extends TestCase {
             if($coverage->collectsPathCoverage()) {
                 $granularity = Granularity::LineBranchAndPath;
             }
-            else if($coverage->collectsBranchCoverage()) {
+            elseif($coverage->collectsBranchCoverage()) {
                 $granularity = Granularity::LineAndBranch;
             }
             $code .= 'require ' . var_export(dirname(__DIR__) . '/fixtures/subprocess-coverage.php', true) . ';';

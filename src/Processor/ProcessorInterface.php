@@ -8,9 +8,9 @@ interface ProcessorInterface {
     public function setData(iterable $data): void;
 
     /**
-     * @return iterable<mixed, mixed>|null
+     * @return iterable<mixed, mixed>
      */
-    public function getData(): ?iterable;
+    public function getData(): iterable;
 
     /**
      * Use this if you need to do some custom task before processing a chunk
