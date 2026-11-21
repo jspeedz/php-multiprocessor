@@ -9,7 +9,7 @@
          displayDetailsOnTestsThatTriggerWarnings="true"
          displayDetailsOnPhpunitNotices="true"
          displayDetailsOnPhpunitDeprecations="true"
-         cacheDirectory=".phpunit.cache">
+         cacheDirectory="var/cache/.phpunit.cache">
     <php>
         <ini name="display_errors" value="1"/>
         <!-- See: https://docs.phpunit.de/en/13.4/error-handling.html -->

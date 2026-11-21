@@ -3,6 +3,6 @@ parameters:
     level: 10
     paths:
         - src
-    tmpDir: .phpstan.cache
+    tmpDir: var/cache/.phpstan.cache
     treatPhpDocTypesAsCertain: false
     editorUrlTitle: '%%relFile%%:%%line%%'
