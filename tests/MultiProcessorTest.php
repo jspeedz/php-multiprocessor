@@ -396,7 +396,7 @@ final class MultiProcessorTest extends TestCase {
                     if($head !== null && in_array($head[0], [$pid, -1], true)) {
                         $key = 0;
                     }
-                    else if(!($flags & WNOHANG) || isset($GLOBALS['killed'][$pid])) {
+                    elseif(!($flags & WNOHANG) || isset($GLOBALS['killed'][$pid])) {
                         foreach($GLOBALS['waits'] as $index => $wait) {
                             if($wait[0] === $pid) {
                                 $key = $index;

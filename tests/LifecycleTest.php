@@ -156,7 +156,7 @@ final class LifecycleTest extends TestCase {
                     $active++;
                     self::assertLessThanOrEqual($concurrency, $active, 'Active processors must respect the concurrency limit.');
                 }
-                else if($event['stage'] === 'exit') {
+                elseif($event['stage'] === 'exit') {
                     $active--;
                 }
                 $children[$event['pid']][] = $event;

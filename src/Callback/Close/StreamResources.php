@@ -74,7 +74,7 @@ class StreamResources {
                 if($meta['stream_type'] === 'dir') {
                     closedir($resource);
                 }
-                else if(!isset($meta['uri']) && $meta['stream_type'] === 'STDIO') {
+                elseif(!isset($meta['uri']) && $meta['stream_type'] === 'STDIO') {
                     // Assume this is a process handle, like popen()
                     pclose($resource);
                 }

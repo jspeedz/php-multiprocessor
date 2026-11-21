@@ -26,7 +26,7 @@ class ProcessorCores {
                 $cores = preg_match_all('/^processor/m', $cpuInfo);
             }
         }
-        else if('win' == strtolower(substr(PHP_OS, 0, 3))) {
+        elseif('win' == strtolower(substr(PHP_OS, 0, 3))) {
             $process = @popen('wmic cpu get NumberOfCores', 'rb');
             if(false !== $process) {
                 fgets($process);

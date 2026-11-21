@@ -162,7 +162,7 @@ final class ParentIsAliveTest extends TestCase {
             if($coverage->collectsPathCoverage()) {
                 $granularity = Granularity::LineBranchAndPath;
             }
-            else if($coverage->collectsBranchCoverage()) {
+            elseif($coverage->collectsBranchCoverage()) {
                 $granularity = Granularity::LineAndBranch;
             }
             $code .= 'require ' . var_export(dirname(__DIR__, 2) . '/fixtures/subprocess-coverage.php', true) . ';';
