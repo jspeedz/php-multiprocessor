@@ -23,13 +23,13 @@ class MultiProcessor {
 
     /**
      * @var array{
-     *     priority: int,
+     *     priority: int<-20, 19>,
      *     concurrentChildren: positive-int,
      *     chunkSize: positive-int,
      *     stopOnParentFatal: bool,
      *     stopOnChildFatal: bool,
      *     stopOnFatalMethod: StopOnFatalMethodEnum,
-     *     terminateGracePeriod: float,
+     *     terminateGracePeriod: non-negative-float,
      *     useProgressBar: bool,
      * }
      */
@@ -103,6 +103,8 @@ class MultiProcessor {
     /**
      * Seconds to wait for SIGKILLed children to be reaped. A child stuck in an uninterruptible system call
      * (like I/O on a dead NFS mount) only dies once that call returns, so the parent gives up waiting on it.
+     *
+     * @var non-negative-float $killReapTimeout
      */
     private float $killReapTimeout = 5.0;
 
@@ -198,19 +200,19 @@ class MultiProcessor {
     }
 
     /**
-     * Enables stopping all processes when the parent/management process fatals
+     * Enables stopping all processes when the parent/management process fatals.
      *
-     * @param bool $stopOnParentFatal = true
+     * @param bool $stopOnParentFatal Default: true
      */
     public function stopOnParentFatal(bool $stopOnParentFatal = true): void {
         $this->settings['stopOnParentFatal'] = $stopOnParentFatal;
     }
 
     /**
-     * Enables stopping all processes when a child process fatals
+     * Enables stopping all processes when a child process fatals.
      * Disabling this still makes the parent exit non-zero after all children finish if any child failed.
      *
-     * @param bool $stopOnChildFatal = true
+     * @param bool $stopOnChildFatal Default: true
      */
     public function stopOnChildFatal(bool $stopOnChildFatal = true): void {
         $this->settings['stopOnChildFatal'] = $stopOnChildFatal;
@@ -219,7 +221,7 @@ class MultiProcessor {
     /**
      * Enables stopping all processes when a child process fatals.
      *
-     * @param StopOnFatalMethodEnum $stopOnFatalMethod = `graceful` will let running children complete, `normal` will kill all children with SIGTERM (and SIGKILL after the grace period, see setTerminateGracePeriod()), `immediate` will kill all children instantly SIGKILL
+     * @param StopOnFatalMethodEnum $stopOnFatalMethod StopOnFatalMethodEnum::GRACEFUL will let running children complete, StopOnFatalMethodEnum::NORMAL will kill all children with SIGTERM (and SIGKILL after the grace period, see setTerminateGracePeriod()), StopOnFatalMethodEnum::IMMEDIATE will kill all children instantly SIGKILL. Default: StopOnFatalMethodEnum::GRACEFUL
      */
     public function stopOnFatalMethod(
         StopOnFatalMethodEnum $stopOnFatalMethod = StopOnFatalMethodEnum::GRACEFUL,
@@ -232,13 +234,16 @@ class MultiProcessor {
      * Children still running after this period (blocked in a system call, ignoring SIGTERM, ...) are killed with SIGKILL.
      * Defaults to 10 seconds. Has no effect on the `graceful` and `immediate` methods.
      *
-     * @param float $seconds 0 or more, 0 sends SIGKILL to children that didn't exit on SIGTERM right away.
+     * @param non-negative-float $seconds 0 or more, 0 sends SIGKILL to children that didn't exit on SIGTERM right away.
      *
      * @throws InvalidGracePeriodException
      */
     public function setTerminateGracePeriod(float $seconds): void {
         if(!is_finite($seconds) || $seconds < 0) {
-            throw new InvalidGracePeriodException('Invalid terminate grace period (' . var_export($seconds, true) . '), must be 0 seconds or more');
+            throw new InvalidGracePeriodException(sprintf(
+                'Invalid terminate grace period (%s), must be 0 seconds or more',
+                var_export($seconds, true),
+            ));
         }
         $this->settings['terminateGracePeriod'] = $seconds;
     }
@@ -261,7 +266,7 @@ class MultiProcessor {
      * They will try to use the same handles/connections and collide.
      *
      * @param Closure $callback
-     * @param ResourceCloseCallbackTriggerEnum $trigger always|once (always run callbacks before forking, or once before the first fork)
+     * @param ResourceCloseCallbackTriggerEnum $trigger ResourceCloseCallbackTriggerEnum::ALWAYS runs the callback before forking echt process, or ResourceCloseCallbackTriggerEnum::ONCE before the first fork only. Default: ResourceCloseCallbackTriggerEnum::ALWAYS
      */
     public function addCloseResourceCallback(
         Closure $callback,
@@ -288,7 +293,10 @@ class MultiProcessor {
             SIGINT => 'SIGINT',
             SIGQUIT => 'SIGQUIT',
             SIGTERM => 'SIGTERM',
-            default => throw new UnsupportedException('Unknown signal string, add to method (' . $signal . ')'),
+            default => throw new UnsupportedException(sprintf(
+                'Unknown signal string, add to method (%s)',
+                $signal,
+            )),
         };
     }
 
@@ -314,8 +322,6 @@ class MultiProcessor {
                 $this->childSignals++;
                 return;
             }
-
-            throw new ProcessException('Caught undefined signal (' . $this->getStringFromSignal($signo) . ')');
         }
         else {
             // Child
@@ -324,15 +330,18 @@ class MultiProcessor {
                 // Nothing to do here
                 return;
             }
-            else if(in_array($signo, self::TERMINATION_SIGNALS, true)) {
+            elseif(in_array($signo, self::TERMINATION_SIGNALS, true)) {
                 // Interrupted mid-chunk: exit like an uncaught signal would (128 + signal), so the parent sees the chunk failed.
                 // Not 1 or 255: those are child fatals to the parent, which would stop the remaining children.
                 // Let's kill myself
                 exit(128 + $signo);
             }
-
-            throw new ProcessException('Caught undefined signal (' . $this->getStringFromSignal($signo) . ')');
         }
+
+        throw new ProcessException(sprintf(
+            'Caught undefined signal (%s)',
+            $this->getStringFromSignal($signo),
+        ));
     }
 
     /**
@@ -389,7 +398,7 @@ class MultiProcessor {
             if($pid === -1) {
                 throw new ProcessException('Could not fork');
             }
-            else if($pid === 0) {
+            elseif($pid === 0) {
                 // This is a child.
                 $this->setProcessTitle(sprintf(
                     '%s (%s-fork %s/%s)',
@@ -411,7 +420,7 @@ class MultiProcessor {
                 $processor->finish();
                 $processor->exit();
             }
-            else if($pid > 0) {
+            elseif($pid > 0) {
                 // This is the parent, $pid contains the child PID.
                 pcntl_setpriority($this->settings['priority'], $pid);
 
@@ -595,8 +604,6 @@ class MultiProcessor {
      * @throws NonCleanExitException
      */
     private function executeWaitForChildren(int $childPID, int $status): void {
-        // @todo do logging with the exit status?
-
         if(!pcntl_wifsignaled($status) && !pcntl_wifexited($status)) {
             // Non-clean exit
             throw new NonCleanExitException('Non clean exit?');
@@ -695,6 +702,7 @@ class MultiProcessor {
      * Reap the given children as they exit, until all are reaped or the time is up.
      *
      * @param int[] $childPIDs
+     * @param non-negative-float $seconds
      *
      * @return int[] The children that are still running
      */
@@ -722,7 +730,7 @@ class MultiProcessor {
     }
 
     /**
-     * Stop tracking a reaped child, so it is never signalled after its PID may have been reused.
+     * Stop tracking a reaped child, so it is never signaled after its PID may have been reused.
      */
     private function forgetChild(int $childPID): void {
         $key = array_search($childPID, $this->childPIDs, true);
@@ -742,7 +750,7 @@ class MultiProcessor {
                 }
             }
         }
-        else if(count($this->closeResourceAlwaysCallbacks) > 0) {
+        elseif(count($this->closeResourceAlwaysCallbacks) > 0) {
             foreach($this->closeResourceAlwaysCallbacks as $callback) {
                 $callback();
             }
