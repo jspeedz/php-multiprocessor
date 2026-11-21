@@ -1,6 +1,6 @@
 <?php
 
-namespace Jspeedz\MultiProcessor {
+namespace Jspeedz\MultiProcessor\Process {
     // Observe real OS calls without replacing their behavior or returned statuses.
     function pcntl_fork(): int {
         $pid = \pcntl_fork();

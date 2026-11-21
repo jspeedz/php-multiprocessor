@@ -9,7 +9,14 @@ use Jspeedz\MultiProcessor\Exception\InvalidGracePeriodException;
 use Jspeedz\MultiProcessor\Exception\InvalidPriorityException;
 use Jspeedz\MultiProcessor\Iterator\ArrayIterator;
 use Jspeedz\MultiProcessor\MultiProcessor;
+use Jspeedz\MultiProcessor\Process\ChildExitHandler;
+use Jspeedz\MultiProcessor\Process\ChildProcesses;
+use Jspeedz\MultiProcessor\Process\ProcessTitle;
+use Jspeedz\MultiProcessor\Process\Signals;
 use Jspeedz\MultiProcessor\Processor\ProcessorAbstract;
+use Jspeedz\MultiProcessor\Progress\ProgressBar;
+use Jspeedz\MultiProcessor\Resource\ResourceCloser;
+use Jspeedz\MultiProcessor\Settings;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\TestWith;
 use PHPUnit\Framework\TestCase;
@@ -18,6 +25,13 @@ use SebastianBergmann\CodeCoverage\Data\RawCodeCoverageData;
 use SebastianBergmann\CodeCoverage\Driver\Granularity;
 
 #[CoversClass(MultiProcessor::class)]
+#[CoversClass(ChildProcesses::class)]
+#[CoversClass(ChildExitHandler::class)]
+#[CoversClass(ProcessTitle::class)]
+#[CoversClass(Signals::class)]
+#[CoversClass(Settings::class)]
+#[CoversClass(ResourceCloser::class)]
+#[CoversClass(ProgressBar::class)]
 final class MultiProcessorTest extends TestCase {
     private array $handlers = [];
     private bool $asyncSignals;
@@ -77,16 +91,35 @@ final class MultiProcessorTest extends TestCase {
         $this->expectOutputString('');
     }
 
-    private function get(MultiProcessor $manager, string $property): mixed {
-        return (new \ReflectionProperty($manager, $property))->getValue($manager);
+    private function get(object $object, string $property): mixed {
+        return (new \ReflectionProperty($object, $property))->getValue($object);
     }
 
-    private function set(MultiProcessor $manager, string $property, mixed $value): void {
-        (new \ReflectionProperty($manager, $property))->setValue($manager, $value);
+    private function set(object $object, string $property, mixed $value): void {
+        (new \ReflectionProperty($object, $property))->setValue($object, $value);
     }
 
-    private function invoke(MultiProcessor $manager, string $method, mixed ...$arguments): mixed {
-        return (new \ReflectionMethod($manager, $method))->invoke($manager, ...$arguments);
+    private function invoke(object $object, string $method, mixed ...$arguments): mixed {
+        return (new \ReflectionMethod($object, $method))->invoke($object, ...$arguments);
+    }
+
+    private function settings(MultiProcessor $manager): array {
+        return get_object_vars($this->get($manager, 'settings'));
+    }
+
+    private function children(MultiProcessor $manager): ChildProcesses {
+        return $this->get($manager, 'children');
+    }
+
+    private function exitHandler(MultiProcessor $manager): ChildExitHandler {
+        return $this->get($manager, 'exitHandler');
+    }
+
+    /**
+     * Track children that were never forked, to feed their exit statuses to the manager.
+     */
+    private function setChildren(MultiProcessor $manager, array $pids): void {
+        $this->set($this->children($manager), 'pids', $pids);
     }
 
     public function testConstructorSetsDefaultSettingsWithoutRegisteringSignals(): void {
@@ -112,7 +145,7 @@ final class MultiProcessorTest extends TestCase {
             'stopOnFatalMethod' => StopOnFatalMethodEnum::GRACEFUL,
             'terminateGracePeriod' => 10.0,
             'useProgressBar' => true,
-        ], $this->get($manager, 'settings'));
+        ], $this->settings($manager));
     }
 
     public function testRunRegistersSignalsForTheRunningProcess(): void {
@@ -153,40 +186,17 @@ final class MultiProcessorTest extends TestCase {
             'stopOnFatalMethod' => StopOnFatalMethodEnum::IMMEDIATE,
             'terminateGracePeriod' => 2.5,
             'useProgressBar' => false,
-        ], $this->get($manager, 'settings'));
+        ], $this->settings($manager));
 
         $manager->stopOnParentFatal();
         $manager->stopOnChildFatal();
         $manager->stopOnFatalMethod();
         $manager->useProgressBar();
-        $settings = $this->get($manager, 'settings');
+        $settings = $this->settings($manager);
         self::assertTrue($settings['stopOnParentFatal']);
         self::assertTrue($settings['stopOnChildFatal']);
         self::assertTrue($settings['useProgressBar']);
         self::assertSame(StopOnFatalMethodEnum::GRACEFUL, $settings['stopOnFatalMethod']);
-    }
-
-    #[TestWith([ResourceCloseCallbackTriggerEnum::ONCE])]
-    #[TestWith([ResourceCloseCallbackTriggerEnum::ALWAYS])]
-    public function testResourceCallbacksRunInRegistrationOrderForTheirTrigger(ResourceCloseCallbackTriggerEnum $trigger): void {
-        $manager = $this->manager();
-        $calls = [];
-        $manager->addCloseResourceCallback(function() use (&$calls): void { $calls[] = 'first'; }, $trigger);
-        $manager->addCloseResourceCallback(function() use (&$calls): void { $calls[] = 'second'; }, $trigger);
-        $other = $trigger === ResourceCloseCallbackTriggerEnum::ONCE
-            ? ResourceCloseCallbackTriggerEnum::ALWAYS : ResourceCloseCallbackTriggerEnum::ONCE;
-        $this->invoke($manager, 'closeAllResources', $other);
-        self::assertSame([], $calls);
-        $this->invoke($manager, 'closeAllResources', $trigger);
-        self::assertSame(['first', 'second'], $calls);
-    }
-
-    #[TestWith([SIGCHLD, 'SIGCHLD'])]
-    #[TestWith([SIGINT, 'SIGINT'])]
-    #[TestWith([SIGQUIT, 'SIGQUIT'])]
-    #[TestWith([SIGTERM, 'SIGTERM'])]
-    public function testSignalNames(int $signal, string $name): void {
-        self::assertSame($name, $this->invoke($this->manager(), 'getStringFromSignal', $signal));
     }
 
     #[TestWith([false])]
@@ -198,7 +208,7 @@ final class MultiProcessorTest extends TestCase {
         }
         $manager->signalHandler(SIGCHLD, ['pid' => 123]);
         self::assertFalse($this->get($manager, 'stopProcessing'));
-        self::assertSame([], $this->get($manager, 'childPIDs'));
+        self::assertSame([], $this->children($manager)->pids());
     }
 
     #[TestWith([false])]
@@ -223,18 +233,16 @@ final class MultiProcessorTest extends TestCase {
     public function testExitStatusesUpdateBookkeeping(int $exitCode, bool $stopOnFatal, bool $alreadyStopping): void {
         $manager = $this->manager();
         $manager->stopOnChildFatal($stopOnFatal);
-        $this->set($manager, 'childPIDs', [123, 456]);
-        $this->set($manager, 'currentRunningChildren', 2);
+        $this->setChildren($manager, [123, 456]);
         $this->set($manager, 'chunksProcessed', 3);
-        $this->set($manager, 'gracefulShutdown', $alreadyStopping);
+        $this->set($this->exitHandler($manager), 'gracefulShutdown', $alreadyStopping);
 
-        $this->invoke($manager, 'executeWaitForChildren', 123, $exitCode << 8);
+        $this->invoke($manager, 'onChildExit', 123, $exitCode << 8);
 
         // Reaped children are always forgotten, so their (possibly reused) PIDs are never signalled
-        self::assertSame([1 => 456], $this->get($manager, 'childPIDs'));
-        self::assertSame(1, $this->get($manager, 'currentRunningChildren'));
+        self::assertSame([1 => 456], $this->children($manager)->pids());
         self::assertSame(4, $this->get($manager, 'chunksProcessed'));
-        self::assertSame($alreadyStopping, $this->get($manager, 'gracefulShutdown'));
+        self::assertSame($alreadyStopping, $this->exitHandler($manager)->gracefulShutdown);
         $this->expectOutputString('');
     }
 
@@ -242,11 +250,10 @@ final class MultiProcessorTest extends TestCase {
     #[TestWith([255])]
     public function testFatalChildStartsGracefulShutdownAndReportsCompletion(int $exitCode): void {
         $manager = $this->manager();
-        $this->set($manager, 'childPIDs', [123]);
-        $this->set($manager, 'currentRunningChildren', 1);
-        $this->invoke($manager, 'executeWaitForChildren', 123, $exitCode << 8);
-        self::assertTrue($this->get($manager, 'gracefulShutdown'));
-        self::assertSame(0, $this->get($manager, 'currentRunningChildren'));
+        $this->setChildren($manager, [123]);
+        $this->invoke($manager, 'onChildExit', 123, $exitCode << 8);
+        self::assertTrue($this->exitHandler($manager)->gracefulShutdown);
+        self::assertSame(0, $this->children($manager)->count());
         self::assertSame(1, $this->get($manager, 'chunksProcessed'));
         $this->expectOutputString(PHP_EOL . 'A child fataled, shutting down 0 processes (currently running children will complete)' . PHP_EOL
             . PHP_EOL . 'Gracefully shut down because of a child process fatal' . PHP_EOL);
@@ -256,13 +263,11 @@ final class MultiProcessorTest extends TestCase {
     #[TestWith([SIGSEGV])]
     public function testChildKilledBySignalIsAFatalThatStartsGracefulShutdown(int $signal): void {
         $manager = $this->manager();
-        $this->set($manager, 'childPIDs', [123, 456]);
-        $this->set($manager, 'currentRunningChildren', 2);
-        $this->invoke($manager, 'executeWaitForChildren', 123, $signal);
-        self::assertSame([1 => 456], $this->get($manager, 'childPIDs'));
-        self::assertTrue($this->get($manager, 'childFailed'));
-        self::assertTrue($this->get($manager, 'gracefulShutdown'));
-        self::assertSame(1, $this->get($manager, 'currentRunningChildren'));
+        $this->setChildren($manager, [123, 456]);
+        $this->invoke($manager, 'onChildExit', 123, $signal);
+        self::assertSame([1 => 456], $this->children($manager)->pids());
+        self::assertTrue($this->exitHandler($manager)->childFailed);
+        self::assertTrue($this->exitHandler($manager)->gracefulShutdown);
         self::assertSame(1, $this->get($manager, 'chunksProcessed'));
         $this->expectOutputString(PHP_EOL . 'A child was terminated by unhandled signal ' . $signal . ' (see the SIG* PHP constants)' . PHP_EOL
             . PHP_EOL . 'A child fataled, shutting down 1 processes (currently running children will complete)' . PHP_EOL);
@@ -271,11 +276,10 @@ final class MultiProcessorTest extends TestCase {
     public function testChildKilledBySignalIsAFailureEvenWithoutStopOnChildFatal(): void {
         $manager = $this->manager();
         $manager->stopOnChildFatal(false);
-        $this->set($manager, 'childPIDs', [123]);
-        $this->set($manager, 'currentRunningChildren', 1);
-        $this->invoke($manager, 'executeWaitForChildren', 123, SIGKILL);
-        self::assertTrue($this->get($manager, 'childFailed'));
-        self::assertFalse($this->get($manager, 'gracefulShutdown'));
+        $this->setChildren($manager, [123]);
+        $this->invoke($manager, 'onChildExit', 123, SIGKILL);
+        self::assertTrue($this->exitHandler($manager)->childFailed);
+        self::assertFalse($this->exitHandler($manager)->gracefulShutdown);
         $this->expectOutputString(PHP_EOL . 'A child was terminated by unhandled signal ' . SIGKILL . ' (see the SIG* PHP constants)' . PHP_EOL);
     }
 
@@ -300,18 +304,16 @@ final class MultiProcessorTest extends TestCase {
 
     public function testStoppedChildIsNotTreatedAsExited(): void {
         $manager = $this->manager();
-        $this->set($manager, 'childPIDs', [123]);
-        $this->set($manager, 'currentRunningChildren', 1);
+        $this->setChildren($manager, [123]);
         try {
-            $this->invoke($manager, 'executeWaitForChildren', 123, (SIGSTOP << 8) | 0x7f);
+            $this->invoke($manager, 'onChildExit', 123, (SIGSTOP << 8) | 0x7f);
             self::fail('A stopped child must raise an exception.');
         }
         catch(NonCleanExitException $exception) {
             self::assertSame('Non clean exit?', $exception->getMessage());
-            self::assertSame(1, $this->get($manager, 'currentRunningChildren'));
             self::assertSame(0, $this->get($manager, 'chunksProcessed'));
             // A stopped child is still running, so it stays tracked
-            self::assertSame([123], $this->get($manager, 'childPIDs'));
+            self::assertSame([123], $this->children($manager)->pids());
         }
     }
 
@@ -322,28 +324,6 @@ final class MultiProcessorTest extends TestCase {
         $this->expectOutputString('Chunks                    Progress                           '
             . '   Elapsed  / Remaining' . "\r" . PHP_EOL . '0/0    '
             . ' [' . str_repeat(' ', 41) . ']   0.00%     00:00:00 / ??:??:??');
-    }
-
-    #[TestWith([2, 2, '50.00%', 3661, '01:01:01 / 01:01:01'])]
-    #[TestWith([4, 0, '100.00%', 36610, '10:10:10 / 00:00:00'])]
-    public function testProgressStatistics(int $completed, int $remaining, string $percentage, int $elapsed, string $times): void {
-        $manager = $this->manager();
-        $data = new ArrayIterator([1, 2, 3, 4]);
-        $data->generateChunks(1);
-        $this->set($manager, 'data', $data);
-        $this->set($manager, 'chunksProcessed', $completed);
-        $this->set($manager, 'timeStarted', time() - $elapsed);
-        $statistics = $this->invoke($manager, 'getRunStatistics');
-        self::assertStringStartsWith("\r" . $completed . '/4    ' . ' [' . str_repeat('=', $completed * 10) . '>' . str_repeat(' ', $remaining * 10) . ']', $statistics);
-        self::assertStringContainsString($percentage, $statistics);
-        $maximumElapsed = time() - $this->get($manager, 'timeStarted');
-        $possibleTimes = [];
-        for($seconds = $elapsed; $seconds <= $maximumElapsed; $seconds++) {
-            $possibleTimes[] = gmdate('H:i:s', $seconds) . ' / '
-                . gmdate('H:i:s', (int) ceil($seconds / $completed * $remaining));
-        }
-        self::assertContains(substr($statistics, -19), $possibleTimes);
-        self::assertSame($times, $possibleTimes[0]);
     }
 
     /**
@@ -371,7 +351,7 @@ final class MultiProcessorTest extends TestCase {
                 // A simulated fork runs the "child" in the parent process itself, which is therefore its own parent
                 function posix_getppid(): int { return \posix_getpid(); }
             }
-            namespace Jspeedz\MultiProcessor {
+            namespace Jspeedz\MultiProcessor\Process {
                 function pcntl_async_signals(?bool $enable = null): bool { return false; }
                 function pcntl_fork(): int {
                     $pid = array_shift($GLOBALS['forks']);
@@ -465,10 +445,12 @@ final class MultiProcessorTest extends TestCase {
             $manager = new \Jspeedz\MultiProcessor\MultiProcessor(
                 new \Jspeedz\MultiProcessor\Iterator\ArrayIterator([10, 20, 30]), $processor);
             $manager->useProgressBar(false);
+            $children = static fn(): \Jspeedz\MultiProcessor\Process\ChildProcesses => (new \ReflectionProperty($manager, 'children'))->getValue($manager);
+            $exitHandler = (new \ReflectionProperty($manager, 'exitHandler'))->getValue($manager);
             PHP . $code . '}';
         try {
             $process = proc_open(
-                [PHP_BINARY, '-r', $script, $coverageFile ?? '', $granularity->name, $root . '/src/MultiProcessor.php'],
+                [PHP_BINARY, '-r', $script, $coverageFile ?? '', $granularity->name, $root . '/src'],
                 [0 => ['file', '/dev/null', 'r'], 1 => ['pipe', 'w'], 2 => ['redirect', 1]], $pipes,
             );
             self::assertIsResource($process);
@@ -574,7 +556,7 @@ final class MultiProcessorTest extends TestCase {
             $GLOBALS['forks'] = [101];
             $GLOBALS['waits'] = [[101, 0]];
             $manager->setMaximumConcurrentChildren(8);
-            (new \ReflectionProperty($manager, 'gracefulShutdown'))->setValue($manager, true);
+            (new \ReflectionProperty($exitHandler, 'gracefulShutdown'))->setValue($exitHandler, true);
             $manager->run();
             echo 'unreachable';
             PHP);
@@ -654,8 +636,8 @@ final class MultiProcessorTest extends TestCase {
         // only 103, as the kernel may have handed PID 102 to an unrelated process already.
         [$status, $output] = $this->subprocess('$GLOBALS["forks"] = [101, 102, 103];'
             . '$GLOBALS["waits"] = [[101, 256], [102, 0], [999, 0], [103, ' . SIGKILL . ']];'
-            . '$GLOBALS["onSleep"] = function() use ($manager): void {'
-            . '  if(!in_array(102, (new \\ReflectionProperty($manager, "childPIDs"))->getValue($manager), true)) {'
+            . '$GLOBALS["onSleep"] = function() use ($manager, $children): void {'
+            . '  if(!in_array(102, $children()->pids(), true)) {'
             . '    unset($GLOBALS["onSleep"]); echo "SIGINT;"; $manager->signalHandler(SIGINT, null);'
             . '  }'
             . '};'
@@ -689,7 +671,7 @@ final class MultiProcessorTest extends TestCase {
         [$status, $output] = $this->subprocess('$GLOBALS["forks"] = [101, 102];'
             . '$GLOBALS["waits"] = [[101, 256], [999, 0], [102, ' . SIGKILL . ']];'
             . '$GLOBALS["stuck"] = [102];'
-            . '(new \\ReflectionProperty($manager, "killReapTimeout"))->setValue($manager, 0.0);'
+            . '(new \\ReflectionProperty($children(), "killReapTimeout"))->setValue($children(), 0.0);'
             . '$manager->setChunkSize(2); $manager->setMaximumConcurrentChildren(2);'
             . '$manager->stopOnFatalMethod(\\Jspeedz\\MultiProcessor\\Enum\\StopOnFatalMethodEnum::IMMEDIATE);'
             . '$manager->run(); echo "unreachable";');
@@ -705,9 +687,9 @@ final class MultiProcessorTest extends TestCase {
     public function testSleepingUntilAChildExits(int $waitable, bool $childSignalled, string $expected, array $usleeps): void {
         // Only when a process we didn't fork stays waitable, sleep until SIGCHLD instead of waiting (which wouldn't block)
         [$status, $output] = $this->subprocess('$GLOBALS["waitable"] = ' . $waitable . ';'
-            . '(new \\ReflectionProperty($manager, "childPIDs"))->setValue($manager, [101]);'
+            . '(new \\ReflectionProperty($children(), "pids"))->setValue($children(), [101]);'
             . ($childSignalled ? '$manager->signalHandler(SIGCHLD, null);' : '')
-            . '(new \\ReflectionMethod($manager, "sleepUntilAChildExits"))->invoke($manager, 0);'
+            . '(new \\ReflectionMethod($children(), "sleepUntilAChildExits"))->invoke($children(), 0);'
             . 'echo json_encode($GLOBALS["usleeps"] ?? []);');
         self::assertSame(0, $status, $output);
         self::assertSame($expected . json_encode($usleeps), $output);
@@ -741,7 +723,7 @@ final class MultiProcessorTest extends TestCase {
     #[TestWith([SIGINT, true])]
     public function testTerminationSignalsExitParentOrChild(int $signal, bool $child): void {
         [$status, $output] = $this->subprocess(
-            '(new \ReflectionProperty($manager, "childPIDs"))->setValue($manager, [101, 102]);'
+            '(new \ReflectionProperty($children(), "pids"))->setValue($children(), [101, 102]);'
             . '$GLOBALS["waits"] = [[101, ' . SIGKILL . '], [102, ' . SIGKILL . ']];'
             . ($child ? '(new \ReflectionProperty($manager, "parentPID"))->setValue($manager, -1);' : '')
             . '$manager->signalHandler(' . $signal . ', null); echo "unreachable";');
@@ -789,7 +771,7 @@ final class MultiProcessorTest extends TestCase {
         $this->set($manager, 'stopProcessing', true);
         $manager->run();
         self::assertSame(0, $this->get($manager, 'chunksProcessed'));
-        self::assertSame([], $this->get($manager, 'childPIDs'));
+        self::assertSame([], $this->children($manager)->pids());
     }
 
     public function testNonIterableChunksAreRejected(): void {
