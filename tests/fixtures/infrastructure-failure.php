@@ -1,6 +1,6 @@
 <?php
 
-namespace Jspeedz\MultiProcessor {
+namespace Jspeedz\MultiProcessor\Process {
     function pcntl_fork(): int {
         $attempt = ++$GLOBALS['attempts'];
         if($GLOBALS['config']['kind'] === 'fork' && $attempt === $GLOBALS['config']['at']) {
@@ -92,7 +92,7 @@ namespace {
         infrastructureEvent('unexpected-return');
     }
     catch(ProcessException | RuntimeException $exception) {
-        $tracked = (new ReflectionProperty($manager, 'childPIDs'))->getValue($manager);
+        $tracked = (new ReflectionProperty($manager, 'children'))->getValue($manager)->pids();
         infrastructureEvent('exception', ['class' => $exception::class, 'message' => $exception->getMessage(), 'tracked' => $tracked]);
         // This cleanup belongs to the caller/fixture. The test does not claim
         // run() automatically stops existing children when it throws.

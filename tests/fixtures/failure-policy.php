@@ -1,6 +1,6 @@
 <?php
 
-namespace Jspeedz\MultiProcessor {
+namespace Jspeedz\MultiProcessor\Process {
     // Observe real syscalls. No successful fork, exit status, or signal is faked.
     function pcntl_fork(): int {
         $chunk = $GLOBALS['nextChunk']++;
