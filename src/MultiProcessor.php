@@ -46,6 +46,11 @@ class MultiProcessor {
     ];
 
     /**
+     * Process title from before run() changed it, the base of the titles of the parent and its children.
+     */
+    private string $baseProcessTitle = '';
+
+    /**
      * @var Closure[]
      */
     private array $closeResourceOnceCallbacks = [];
@@ -354,6 +359,16 @@ class MultiProcessor {
 
         $this->closeAllResources(ResourceCloseCallbackTriggerEnum::ONCE);
 
+        // Show the role of every process in its title, as listed by `ps`. Only works under the CLI SAPI.
+        $this->baseProcessTitle = $this->getCurrentProcessTitle();
+        $this->setProcessTitle(sprintf(
+            '%s (%s-main)',
+            $this->baseProcessTitle,
+            $this->parentPID,
+        ));
+        $chunkCount = count($this->data);
+        $chunkNumber = 0;
+
         foreach($this->data as $chunk) {
             if($this->stopProcessing) {
                 // We should not continue!
@@ -364,6 +379,7 @@ class MultiProcessor {
                 throw new UnsupportedException('Each data chunk must be iterable');
             }
 
+            $chunkNumber++;
             $processor = clone $this->processor;
             $this->currentRunningChildren++;
 
@@ -375,6 +391,13 @@ class MultiProcessor {
             }
             else if($pid === 0) {
                 // This is a child.
+                $this->setProcessTitle(sprintf(
+                    '%s (%s-fork %s/%s)',
+                    $this->baseProcessTitle,
+                    $this->parentPID,
+                    $chunkNumber,
+                    $chunkCount,
+                ));
                 $this->seedRandomGenerator();
 
                 $processor->setData($chunk);
@@ -420,6 +443,11 @@ class MultiProcessor {
                 // Make sure the parent returns a non-zero exit code, even with graceful shutdown enabled.
                 exit(2);
             }
+        }
+
+        if($this->parentPID === posix_getpid()) {
+            // The script may carry on after the run, restore the title it had before.
+            $this->setProcessTitle($this->baseProcessTitle);
         }
     }
 
@@ -730,5 +758,38 @@ class MultiProcessor {
     private function seedRandomGenerator(): void {
         // random_int() gets a random seed via for example /dev/urandom, so this will work after forking too.
         srand(random_int(PHP_INT_MIN, PHP_INT_MAX));
+    }
+
+    /**
+     * The title `ps` shows for this process. Until a title is set, that is the command line it was started with.
+     * PHP doesn't expose that command line. Linux has it in /proc, elsewhere it is rebuilt from the PHP binary name
+     * and the script arguments (dropping interpreter options like `-d`).
+     */
+    private function getCurrentProcessTitle(): string {
+        $title = function_exists('cli_get_process_title') ? cli_get_process_title() : null;
+        if(is_string($title) && $title !== '') {
+            return $title;
+        }
+
+        $commandLine = is_readable('/proc/self/cmdline') ? @file_get_contents('/proc/self/cmdline') : false;
+        if(is_string($commandLine) && trim($commandLine, "\0") !== '') {
+            return str_replace("\0", ' ', rtrim($commandLine, "\0"));
+        }
+
+        $arguments = $_SERVER['argv'] ?? null;
+        if(is_array($arguments) && $arguments !== []) {
+            return basename(PHP_BINARY) . ' ' . implode(' ', array_map(static fn(mixed $argument): string => is_scalar($argument) ? (string) $argument : '', $arguments));
+        }
+
+        return PHP_BINARY;
+    }
+
+    /**
+     * Titles are cosmetic, so failing to set one (outside the CLI SAPI, or an OS that doesn't support it) is ignored.
+     */
+    private function setProcessTitle(string $title): void {
+        if(function_exists('cli_set_process_title')) {
+            @cli_set_process_title($title);
+        }
     }
 }

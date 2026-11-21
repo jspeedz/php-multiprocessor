@@ -53,7 +53,7 @@ $cores = ProcessorCores::getNumberOfCores() * 2;
 echo sprintf('Using a maximum of %s concurrent forked processes' . PHP_EOL, $cores);
 
 $multiProcessor->setMaximumConcurrentChildren($cores);
-$multiProcessor->setChunkSize(250);
+$multiProcessor->setChunkSize(50);
 
 // Stops all children when the parent process is gone
 $multiProcessor->stopOnParentFatal(true);
