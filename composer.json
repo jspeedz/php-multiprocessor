@@ -35,7 +35,16 @@
     "phpunit/phpunit": "^13.4",
     "phpstan/phpstan": "^2.3",
     "doctrine/dbal": "^4.5",
-    "doctrine/orm": "^3.7"
+    "doctrine/orm": "^3.7",
+    "monolog/monolog": "^3.10",
+    "symfony/console": "^7.4 || ^8.0",
+    "symfony/dependency-injection": "^7.4 || ^8.0"
+  },
+  "suggest": {
+    "monolog/monolog": "^3.0, to lock stdout/stderr log writes across forks with Logging\\Monolog\\CrossProcessLockHandler",
+    "symfony/console": "^7.4 || ^8.0, to add the --lock-log-output command option with Logging\\Symfony\\Console\\LogOutputLockOptionTrait",
+    "doctrine/dbal": "^4.0, to reset Doctrine connections before forking with Callback\\Close\\ResetDoctrine",
+    "doctrine/persistence": "^3.0 || ^4.0, to reset Doctrine connections before forking with Callback\\Close\\ResetDoctrine"
   },
   "scripts": {
     "test": "phpunit",
