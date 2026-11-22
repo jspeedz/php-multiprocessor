@@ -202,8 +202,7 @@ php bin/console app:import --lock-log-output
 ```
 
 #### Notes
-- The lock file is created by the first locked write, and the owner removes it when it exits. If the owner dies while children are still running, children that have not logged yet would create a new lock file and no longer share the lock with the others. `stopOnParentFatal()` (enabled by default) stops the children in that case.
-  In this case, lock files could be left behind without cleaning them up.
+- The lock file is created by the first locked write, and the main process removes it when it exits. If the main process is killed by SIGKILL, the OOM killer or a segfault while children are still running, children that have not logged yet would create a new lock file and no longer share the lock with the others. In this case, lock files could be left behind without cleaning them up.
 
 ## Tests
 
