@@ -12,7 +12,7 @@ Processor cores are used more efficiently this way as well. You can for example 
 - Achieving multitenancy architecture with only a single parent process and isolated forks to process tenants
 
 ## Prerequisites/Requirements
-- Linux or MacOS
+- Linux or macOS
 - PHP 8.4.27 or greater
 - ext-pcntl
 - ext-posix
