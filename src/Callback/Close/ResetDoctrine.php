@@ -7,6 +7,8 @@ use Doctrine\Persistence\ManagerRegistry;
 
 /**
  * Closes all Doctrine connections and detaches all attached entities from all entity managers.
+ *
+ * Requires doctrine/dbal 4 and doctrine/persistence 3 or 4.
  */
 class ResetDoctrine {
     public function __construct(

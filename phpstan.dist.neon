@@ -3,6 +3,8 @@ parameters:
     level: 10
     paths:
         - src
+        # Uses Logging\Symfony\Console\LogOutputLockOptionTrait, traits without a user are not analysed
+        - tests/Logging/Symfony/Console/LogOutputLockOptionCommand.php
     tmpDir: var/cache/.phpstan.cache
     treatPhpDocTypesAsCertain: false
     editorUrlTitle: '%%relFile%%:%%line%%'
