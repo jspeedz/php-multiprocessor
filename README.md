@@ -16,7 +16,6 @@ Processor cores are used more efficiently this way as well. You can for example 
 - PHP 8.4.27 or greater
 - ext-pcntl
 - ext-posix
-- ext-json
 
 Optional integrations, each only needs its packages when you use it (not installed with this package):
 
