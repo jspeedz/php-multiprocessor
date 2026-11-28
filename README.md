@@ -13,7 +13,7 @@ Processor cores are used more efficiently this way as well. You can for example 
 
 ## Prerequisites/Requirements
 - Linux or macOS
-- PHP 8.4.27 or greater
+- PHP 8.4.27 or greater (tested on 8.4, 8.5 and 8.6)
 - ext-pcntl
 - ext-posix
 

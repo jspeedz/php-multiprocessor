@@ -1,5 +1,8 @@
 parameters:
-    phpVersion: 80400
+    # Supported range, keep in sync with composer.json and the PHPUnit matrix in .github/workflows/ci.yml
+    phpVersion:
+        min: 80400
+        max: 80699
     level: 10
     paths:
         - src
