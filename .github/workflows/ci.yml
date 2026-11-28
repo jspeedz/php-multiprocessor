@@ -38,6 +38,7 @@ defaults:
         shell: bash --noprofile --norc -euo pipefail {0}
 
 env:
+    # Lowest supported version: installs the dependencies, and the only PHPUnit run that measures coverage
     PHP_VERSION: '8.4'
     PHP_EXTENSIONS: 'pcntl, posix, json'
     # Unique per run, so every check job uses exactly the dependencies installed by the install job
@@ -122,10 +123,17 @@ jobs:
                         run: composer audit --no-interaction --locked
 
     phpunit:
-        name: PHPUnit
+        name: PHPUnit (PHP ${{ matrix.php }})
         needs: install
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.tests }}
         runs-on: ubuntu-latest
+        strategy:
+            fail-fast: false
+            matrix:
+                # Supported versions, keep in sync with composer.json and phpVersion in phpstan.dist.neon
+                php: ['8.4', '8.5', '8.6']
+        env:
+            COVERAGE: ${{ matrix.php == '8.4' }}
         steps:
             -   uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
                 with:
@@ -135,9 +143,9 @@ jobs:
             -   name: Setup PHP
                 uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
                 with:
-                    php-version: ${{ env.PHP_VERSION }}
+                    php-version: ${{ matrix.php }}
                     extensions: ${{ env.PHP_EXTENSIONS }}
-                    coverage: pcov
+                    coverage: ${{ env.COVERAGE == 'true' && 'pcov' || 'none' }}
 
             -   name: Restore installed dependencies
                 uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -148,26 +156,33 @@ jobs:
                     key: ${{ env.VENDOR_CACHE_KEY }}
                     fail-on-cache-miss: true
 
-            -   name: Run PHPUnit with coverage
-                run: >-
-                    vendor/bin/phpunit
-                    --coverage-clover .phpunit.results/coverage.xml
-                    --coverage-text
-                    --only-summary-for-coverage-text
-                    --log-junit .phpunit.results/junit.xml
+            -   name: Run PHPUnit
+                run: |
+                    args=(--log-junit .phpunit.results/junit.xml)
+                    if [[ "$COVERAGE" == 'true' ]]; then
+                        args+=(--coverage-clover .phpunit.results/coverage.xml --coverage-text --only-summary-for-coverage-text)
+                    else
+                        args+=(--no-coverage)
+                    fi
+                    vendor/bin/phpunit "${args[@]}"
 
             -   name: Write test results and coverage to run summary
                 # Also when tests fail, that's when the summary matters most
                 if: ${{ !cancelled() }}
+                env:
+                    PHP_MATRIX_VERSION: ${{ matrix.php }}
                 run: |
                     mkdir -p .phpunit.results
                     {
-                        php .github/scripts/junit-markdown.php .phpunit.results/junit.xml "$GITHUB_WORKSPACE"
-                        echo
-                        if [[ -f .phpunit.results/coverage.xml ]]; then
-                            php .github/scripts/coverage-markdown.php .phpunit.results/coverage.xml "$GITHUB_WORKSPACE"
-                        else
-                            printf '## Code coverage\n\n🔴 No coverage report was produced.\n'
+                        php .github/scripts/junit-markdown.php .phpunit.results/junit.xml "$GITHUB_WORKSPACE" \
+                            | sed "s/^## PHPUnit\$/## PHPUnit (PHP $PHP_MATRIX_VERSION)/"
+                        if [[ "$COVERAGE" == 'true' ]]; then
+                            echo
+                            if [[ -f .phpunit.results/coverage.xml ]]; then
+                                php .github/scripts/coverage-markdown.php .phpunit.results/coverage.xml "$GITHUB_WORKSPACE"
+                            else
+                                printf '## Code coverage\n\n🔴 No coverage report was produced.\n'
+                            fi
                         fi
                     } | tee .phpunit.results/summary.md >> "$GITHUB_STEP_SUMMARY"
 
@@ -175,7 +190,7 @@ jobs:
                 if: ${{ !cancelled() && github.event_name == 'pull_request' }}
                 uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
                 with:
-                    name: summary-phpunit
+                    name: summary-phpunit-${{ matrix.php }}
                     path: .phpunit.results/summary.md
                     if-no-files-found: ignore
                     retention-days: 1
@@ -283,13 +298,27 @@ jobs:
                         echo
                     }
 
+                    # One summary per PHP version of the matrix
+                    phpunit_sections() {
+                        local found=false file
+                        for file in summaries/summary-phpunit-*/summary.md; do
+                            [[ -s "$file" ]] || continue
+                            found=true
+                            cat "$file"
+                            echo
+                        done
+                        if [[ "$found" == false ]]; then
+                            section 'PHPUnit' "$PHPUNIT_RESULT" /dev/null
+                        fi
+                    }
+
                     {
                         echo "$marker"
                         echo "# CI checks"
                         echo
                         echo "$(status_icon "$PHPUNIT_RESULT") PHPUnit: \`$PHPUNIT_RESULT\` · $(status_icon "$PHPSTAN_RESULT") PHPStan: \`$PHPSTAN_RESULT\`"
                         echo
-                        section 'PHPUnit' "$PHPUNIT_RESULT" summaries/summary-phpunit/summary.md
+                        phpunit_sections
                         section 'PHPStan' "$PHPSTAN_RESULT" summaries/summary-phpstan/summary.md
                         echo "<sub>Commit ${HEAD_SHA:0:7} · [workflow run]($RUN_URL)</sub>"
                     } > comment.md
