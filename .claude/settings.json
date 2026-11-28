@@ -1,0 +1,30 @@
+{
+    "enabledPlugins": {},
+    "permissions": {
+        "allow": [
+            "Bash(composer test)",
+            "Bash(composer test *)",
+            "Bash(composer phpstan)",
+            "Bash(composer phpstan *)",
+            "Bash(php -d memory_limit=512M vendor/bin/phpstan analyse *)",
+            "WebFetch(domain:php.net)"
+        ]
+    },
+    "sandbox": {
+        "enabled": true,
+        "autoAllowBashIfSandboxed": true,
+        "excludedCommands": [
+            "git",
+            "composer test",
+            "composer test *",
+            "php -d zend.assertions=1 -d assert.exception=1 -d pcov.enabled=0 vendor/bin/phpunit --no-coverage --filter *",
+            "php vendor/bin/phpunit *",
+            "composer phpstan",
+            "composer phpstan *",
+            "php -d memory_limit=512M vendor/bin/phpstan analyse *"
+        ],
+        "network": {
+            "allowLocalBinding": false
+        }
+    }
+}
